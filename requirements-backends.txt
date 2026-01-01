@@ -1,0 +1,23 @@
+# Backend SDK dependencies for SciTrans translation
+# Install with: pip install -r requirements-backends.txt
+
+# OpenAI (for OpenAI and DeepSeek backends)
+openai>=1.0.0
+
+# Anthropic (for Claude backends)
+anthropic>=0.25.0
+
+# Free translation libraries
+googletrans==4.0.0rc1
+deep-translator>=1.11.0
+
+# HTTP requests (for various backends)
+requests>=2.31.0
+
+# Optional: Ollama (local LLMs)
+# ollama>=0.1.0
+
+# Optional: HuggingFace (transformers)
+# transformers>=4.30.0
+# torch>=2.0.0
+

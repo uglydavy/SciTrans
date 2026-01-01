@@ -1,0 +1,44 @@
+# MANIFEST.in for SciTrans
+# Controls what goes into the source distribution (sdist)
+
+# Include package data
+recursive-include scitrans *.py
+recursive-include scitrans/assets/fonts *.ttf
+
+# Include documentation
+include README.md
+include LICENSE
+include pyproject.toml
+include setup.cfg
+
+# Include essential docs
+recursive-include docs *.md
+
+# Exclude development and build artifacts
+prune .venv
+prune .idea
+prune .vscode
+prune .pytest_cache
+prune .mypy_cache
+prune .ruff_cache
+prune __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.egg-info
+global-exclude .DS_Store
+
+# Exclude output directories
+prune outputs
+prune previews
+prune test_pdfs
+prune experiments/results
+
+# Exclude development files
+exclude .env
+exclude .env.*
+global-exclude *.log
+
+# Exclude CI/development configs (keep in repo, not in sdist)
+exclude .pre-commit-config.yaml
+exclude .gitignore
+prune .github

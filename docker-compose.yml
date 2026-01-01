@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  scitrans:
+    build: .
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/app/data
+      - ./setup_env.sh:/app/setup_env.sh:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: scitrans gui --port 7860
+    restart: unless-stopped
+

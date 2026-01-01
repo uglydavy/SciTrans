@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Build
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Outputs
+outputs/
+previews/
+test_input.pdf
+test_output*.pdf
+test*.pdf
+debug*.pdf
+quick_test*.pdf
+*.pdf.backup
+
+# Experiments
+experiments/results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+*.log
+.cache/
+debug_translation.sh
+debug*.sh
+
+# Environment
+.env
+.env.local
+setup_env.sh
+

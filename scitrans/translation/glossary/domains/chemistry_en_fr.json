@@ -1,0 +1,40 @@
+{
+  "domain": "chemistry",
+  "direction": "en-fr",
+  "description": "Chemistry scientific terms",
+  "total_terms": 30,
+  "terms": {
+    "molecule": "molécule",
+    "atom": "atome",
+    "electron": "électron",
+    "proton": "proton",
+    "neutron": "neutron",
+    "chemical bond": "liaison chimique",
+    "covalent bond": "liaison covalente",
+    "ionic bond": "liaison ionique",
+    "oxidation": "oxydation",
+    "reduction": "réduction",
+    "catalyst": "catalyseur",
+    "reagent": "réactif",
+    "solvent": "solvant",
+    "solution": "solution",
+    "concentration": "concentration",
+    "molar mass": "masse molaire",
+    "equilibrium": "équilibre",
+    "reaction rate": "vitesse de réaction",
+    "organic chemistry": "chimie organique",
+    "inorganic chemistry": "chimie inorganique",
+    "polymer": "polymère",
+    "compound": "composé",
+    "element": "élément",
+    "isotope": "isotope",
+    "valence": "valence",
+    "electronegativity": "électronégativité",
+    "spectroscopy": "spectroscopie",
+    "chromatography": "chromatographie",
+    "titration": "titrage",
+    "pH": "pH"
+  }
+}
+
+

@@ -1,0 +1,1411 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting openai
+  Using cached openai-2.14.0-py3-none-any.whl (1.1 MB)
+Collecting anthropic
+  Using cached anthropic-0.75.0-py3-none-any.whl (388 kB)
+Collecting googletrans==4.0.0rc1
+  Using cached googletrans-4.0.0rc1.tar.gz (20 kB)
+  Preparing metadata (setup.py): started
+  Preparing metadata (setup.py): finished with status 'done'
+Collecting requests
+  Using cached requests-2.32.5-py3-none-any.whl (64 kB)
+Collecting httpx==0.13.3 (from googletrans==4.0.0rc1)
+  Using cached httpx-0.13.3-py3-none-any.whl (55 kB)
+Collecting certifi (from httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached certifi-2025.11.12-py3-none-any.whl (159 kB)
+Collecting hstspreload (from httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached hstspreload-2025.1.1-py3-none-any.whl (1.3 MB)
+Collecting sniffio (from httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
+Collecting chardet==3.* (from httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached chardet-3.0.4-py2.py3-none-any.whl (133 kB)
+Collecting idna==2.* (from httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached idna-2.10-py2.py3-none-any.whl (58 kB)
+Collecting rfc3986<2,>=1.3 (from httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached rfc3986-1.5.0-py2.py3-none-any.whl (31 kB)
+Collecting httpcore==0.9.* (from httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached httpcore-0.9.1-py3-none-any.whl (42 kB)
+Collecting h11<0.10,>=0.8 (from httpcore==0.9.*->httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached h11-0.9.0-py2.py3-none-any.whl (53 kB)
+Collecting h2==3.* (from httpcore==0.9.*->httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached h2-3.2.0-py2.py3-none-any.whl (65 kB)
+Collecting hyperframe<6,>=5.2.0 (from h2==3.*->httpcore==0.9.*->httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached hyperframe-5.2.0-py2.py3-none-any.whl (12 kB)
+Collecting hpack<4,>=3.0 (from h2==3.*->httpcore==0.9.*->httpx==0.13.3->googletrans==4.0.0rc1)
+  Using cached hpack-3.0.0-py2.py3-none-any.whl (38 kB)
+Collecting anyio<5,>=3.5.0 (from openai)
+  Using cached anyio-4.12.0-py3-none-any.whl (113 kB)
+Collecting distro<2,>=1.7.0 (from openai)
+  Using cached distro-1.9.0-py3-none-any.whl (20 kB)
+INFO: pip is looking at multiple versions of openai to determine which version is compatible with other requirements. This could take a while.
+Collecting openai
+  Using cached openai-2.13.0-py3-none-any.whl (1.1 MB)
+  Downloading openai-2.12.0-py3-none-any.whl (1.1 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.1/1.1 MB 880.8 kB/s eta 0:00:00
+
+  Downloading openai-2.11.0-py3-none-any.whl (1.1 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.1/1.1 MB 7.9 MB/s eta 0:00:00
+
+  Downloading openai-2.9.0-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 14.2 MB/s eta 0:00:00
+
+  Using cached openai-2.8.1-py3-none-any.whl (1.0 MB)
+  Downloading openai-2.8.0-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 448.9 kB/s eta 0:00:00
+
+  Downloading openai-2.7.2-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 7.0 MB/s eta 0:00:00
+
+INFO: pip is looking at multiple versions of openai to determine which version is compatible with other requirements. This could take a while.
+  Downloading openai-2.7.1-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 7.1 MB/s eta 0:00:00
+
+  Downloading openai-2.7.0-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 7.0 MB/s eta 0:00:00
+
+  Downloading openai-2.6.1-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 7.2 MB/s eta 0:00:00
+
+  Downloading openai-2.6.0-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-2.5.0-py3-none-any.whl (999 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 999.9/999.9 kB 1.4 MB/s eta 0:00:00
+
+INFO: This is taking longer than usual. You might need to provide the dependency resolver with stricter constraints to reduce runtime. See https://pip.pypa.io/warnings/backtracking for guidance. If you want to abort this run, press Ctrl + C.
+  Downloading openai-2.4.0-py3-none-any.whl (1.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.0/1.0 MB 1.8 MB/s eta 0:00:00
+
+  Downloading openai-2.3.0-py3-none-any.whl (999 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 999.8/999.8 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-2.2.0-py3-none-any.whl (998 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 999.0/999.0 kB 2.7 MB/s eta 0:00:00
+
+  Downloading openai-2.1.0-py3-none-any.whl (964 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 964.9/964.9 kB 2.9 MB/s eta 0:00:00
+
+  Downloading openai-2.0.1-py3-none-any.whl (956 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 956.3/956.3 kB 3.0 MB/s eta 0:00:00
+
+  Downloading openai-2.0.0-py3-none-any.whl (955 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 955.5/955.5 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.109.1-py3-none-any.whl (948 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 948.6/948.6 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.109.0-py3-none-any.whl (948 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 948.4/948.4 kB 3.5 MB/s eta 0:00:00
+
+  Downloading openai-1.108.2-py3-none-any.whl (948 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 948.4/948.4 kB 3.6 MB/s eta 0:00:00
+
+  Downloading openai-1.108.1-py3-none-any.whl (948 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 948.4/948.4 kB 3.5 MB/s eta 0:00:00
+
+  Downloading openai-1.108.0-py3-none-any.whl (948 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 948.1/948.1 kB 3.8 MB/s eta 0:00:00
+
+  Downloading openai-1.107.3-py3-none-any.whl (947 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 947.6/947.6 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.107.2-py3-none-any.whl (946 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 946.9/946.9 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.107.1-py3-none-any.whl (945 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 945.2/945.2 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.107.0-py3-none-any.whl (950 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 951.0/951.0 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.106.1-py3-none-any.whl (930 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 930.8/930.8 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.106.0-py3-none-any.whl (930 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 930.8/930.8 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.105.0-py3-none-any.whl (928 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 928.2/928.2 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.104.2-py3-none-any.whl (928 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 928.2/928.2 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.104.1-py3-none-any.whl (928 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 928.1/928.1 kB 5.1 MB/s eta 0:00:00
+
+  Downloading openai-1.104.0-py3-none-any.whl (926 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 926.7/926.7 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.103.0-py3-none-any.whl (926 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 926.2/926.2 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.102.0-py3-none-any.whl (812 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 812.0/812.0 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.101.0-py3-none-any.whl (810 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 810.8/810.8 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.100.2-py3-none-any.whl (787 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 787.8/787.8 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.100.1-py3-none-any.whl (788 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 788.3/788.3 kB 4.3 MB/s eta 0:00:00
+
+  Downloading openai-1.100.0-py3-none-any.whl (786 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 786.5/786.5 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.99.9-py3-none-any.whl (786 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 786.8/786.8 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.99.8-py3-none-any.whl (786 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 786.8/786.8 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.99.7-py3-none-any.whl (786 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 786.8/786.8 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.99.6-py3-none-any.whl (786 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 786.3/786.3 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.99.5-py3-none-any.whl (786 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 786.2/786.2 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.99.4-py3-none-any.whl (786 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 786.2/786.2 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.99.3-py3-none-any.whl (785 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 785.8/785.8 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.99.2-py3-none-any.whl (785 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 785.6/785.6 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.99.1-py3-none-any.whl (767 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 767.8/767.8 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.99.0-py3-none-any.whl (767 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 767.8/767.8 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.98.0-py3-none-any.whl (767 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 767.7/767.7 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.97.2-py3-none-any.whl (764 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 764.4/764.4 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.97.1-py3-none-any.whl (764 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 764.4/764.4 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.97.0-py3-none-any.whl (764 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 765.0/765.0 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.96.1-py3-none-any.whl (757 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 757.5/757.5 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.96.0-py3-none-any.whl (757 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 757.1/757.1 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.95.1-py3-none-any.whl (755 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 755.6/755.6 kB 4.4 MB/s eta 0:00:00
+
+  Downloading openai-1.95.0-py3-none-any.whl (755 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 755.6/755.6 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.94.0-py3-none-any.whl (755 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 755.2/755.2 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.93.3-py3-none-any.whl (755 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 755.1/755.1 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.93.2-py3-none-any.whl (755 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 755.1/755.1 kB 4.4 MB/s eta 0:00:00
+
+  Downloading openai-1.93.1-py3-none-any.whl (755 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 755.1/755.1 kB 3.9 MB/s eta 0:00:00
+
+  Downloading openai-1.93.0-py3-none-any.whl (755 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 755.0/755.0 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.92.3-py3-none-any.whl (753 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 753.4/753.4 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.92.2-py3-none-any.whl (753 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 753.3/753.3 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.92.1-py3-none-any.whl (753 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 753.4/753.4 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.92.0-py3-none-any.whl (753 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 753.4/753.4 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.91.0-py3-none-any.whl (735 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 735.8/735.8 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.90.0-py3-none-any.whl (734 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 734.6/734.6 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.89.0-py3-none-any.whl (734 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 734.7/734.7 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.88.0-py3-none-any.whl (734 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 734.3/734.3 kB 5.1 MB/s eta 0:00:00
+
+  Downloading openai-1.87.0-py3-none-any.whl (734 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 734.4/734.4 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.86.0-py3-none-any.whl (730 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 730.3/730.3 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.85.0-py3-none-any.whl (730 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 730.2/730.2 kB 4.3 MB/s eta 0:00:00
+
+  Downloading openai-1.84.0-py3-none-any.whl (725 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 725.5/725.5 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.83.0-py3-none-any.whl (723 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 723.4/723.4 kB 4.4 MB/s eta 0:00:00
+
+  Downloading openai-1.82.1-py3-none-any.whl (720 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 720.5/720.5 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.82.0-py3-none-any.whl (720 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 720.4/720.4 kB 4.3 MB/s eta 0:00:00
+
+  Downloading openai-1.81.0-py3-none-any.whl (717 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 717.5/717.5 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.80.0-py3-none-any.whl (701 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 701.4/701.4 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.79.0-py3-none-any.whl (683 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 683.3/683.3 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.78.1-py3-none-any.whl (680 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 680.9/680.9 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.78.0-py3-none-any.whl (680 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 680.4/680.4 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.77.0-py3-none-any.whl (662 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 662.0/662.0 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.76.2-py3-none-any.whl (661 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 661.3/661.3 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.76.1-py3-none-any.whl (661 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 661.2/661.2 kB 4.6 MB/s eta 0:00:00
+
+  Downloading openai-1.76.0-py3-none-any.whl (661 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 661.2/661.2 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.75.0-py3-none-any.whl (646 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 647.0/647.0 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.74.1-py3-none-any.whl (644 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 645.0/645.0 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.74.0-py3-none-any.whl (644 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 644.8/644.8 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.73.0-py3-none-any.whl (644 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 644.4/644.4 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.72.0-py3-none-any.whl (643 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 643.9/643.9 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.71.0-py3-none-any.whl (598 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 599.0/599.0 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.70.0-py3-none-any.whl (599 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 599.1/599.1 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.69.0-py3-none-any.whl (599 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 599.1/599.1 kB 4.1 MB/s eta 0:00:00
+
+  Downloading openai-1.68.2-py3-none-any.whl (606 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 606.1/606.1 kB 4.8 MB/s eta 0:00:00
+
+  Downloading openai-1.68.1-py3-none-any.whl (606 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 606.1/606.1 kB 4.5 MB/s eta 0:00:00
+
+  Downloading openai-1.68.0-py3-none-any.whl (605 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 605.6/605.6 kB 5.0 MB/s eta 0:00:00
+
+  Downloading openai-1.67.0-py3-none-any.whl (580 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 580.2/580.2 kB 4.3 MB/s eta 0:00:00
+
+  Downloading openai-1.66.5-py3-none-any.whl (571 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 571.1/571.1 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.66.3-py3-none-any.whl (567 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 567.4/567.4 kB 4.7 MB/s eta 0:00:00
+
+  Downloading openai-1.66.2-py3-none-any.whl (567 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 567.3/567.3 kB 26.9 MB/s eta 0:00:00
+
+  Downloading openai-1.66.1-py3-none-any.whl (566 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 566.4/566.4 kB 3.5 MB/s eta 0:00:00
+
+  Downloading openai-1.66.0-py3-none-any.whl (566 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 566.4/566.4 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.65.5-py3-none-any.whl (474 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 474.5/474.5 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.65.4-py3-none-any.whl (473 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 473.5/473.5 kB 3.0 MB/s eta 0:00:00
+
+  Downloading openai-1.65.3-py3-none-any.whl (472 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.8/472.8 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.65.2-py3-none-any.whl (473 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 473.2/473.2 kB 3.4 MB/s eta 0:00:00
+
+  Downloading openai-1.65.1-py3-none-any.whl (472 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.8/472.8 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.65.0-py3-none-any.whl (472 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.8/472.8 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.64.0-py3-none-any.whl (472 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.3/472.3 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.63.2-py3-none-any.whl (472 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.3/472.3 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.63.1-py3-none-any.whl (472 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.3/472.3 kB 3.4 MB/s eta 0:00:00
+
+  Downloading openai-1.63.0-py3-none-any.whl (472 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.3/472.3 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.62.0-py3-none-any.whl (464 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 464.8/464.8 kB 2.9 MB/s eta 0:00:00
+
+  Downloading openai-1.61.1-py3-none-any.whl (463 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 463.1/463.1 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.61.0-py3-none-any.whl (460 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 460.6/460.6 kB 3.4 MB/s eta 0:00:00
+
+  Downloading openai-1.60.2-py3-none-any.whl (456 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 456.1/456.1 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.60.1-py3-none-any.whl (456 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 456.1/456.1 kB 3.6 MB/s eta 0:00:00
+
+  Downloading openai-1.60.0-py3-none-any.whl (456 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 456.1/456.1 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.59.9-py3-none-any.whl (455 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 455.5/455.5 kB 3.0 MB/s eta 0:00:00
+
+  Downloading openai-1.59.8-py3-none-any.whl (455 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 455.6/455.6 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.59.7-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.8/454.8 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.59.6-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.8/454.8 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.59.5-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.8/454.8 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.59.4-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.8/454.8 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.59.3-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.8/454.8 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.59.2-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.8/454.8 kB 3.5 MB/s eta 0:00:00
+
+  Downloading openai-1.58.1-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.3/454.3 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.58.0-py3-none-any.whl (454 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 454.3/454.3 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.57.4-py3-none-any.whl (390 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 390.3/390.3 kB 3.5 MB/s eta 0:00:00
+
+  Downloading openai-1.57.3-py3-none-any.whl (390 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 390.2/390.2 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.57.2-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.9/389.9 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.57.1-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.8/389.8 kB 2.9 MB/s eta 0:00:00
+
+  Downloading openai-1.57.0-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.9/389.9 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.56.2-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.9/389.9 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.56.1-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.8/389.8 kB 3.1 MB/s eta 0:00:00
+
+  Downloading openai-1.56.0-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.8/389.8 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.55.3-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.6/389.6 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.55.2-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.5/389.5 kB 2.9 MB/s eta 0:00:00
+
+  Downloading openai-1.55.1-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.5/389.5 kB 3.3 MB/s eta 0:00:00
+
+  Downloading openai-1.55.0-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.5/389.5 kB 2.8 MB/s eta 0:00:00
+
+  Downloading openai-1.54.5-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.5/389.5 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.54.4-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.6/389.6 kB 3.2 MB/s eta 0:00:00
+
+  Downloading openai-1.54.3-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.6/389.6 kB 3.6 MB/s eta 0:00:00
+
+  Downloading openai-1.54.2-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.3/389.3 kB 3.4 MB/s eta 0:00:00
+
+  Downloading openai-1.54.1-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.3/389.3 kB 1.2 MB/s eta 0:00:00
+
+  Downloading openai-1.54.0-py3-none-any.whl (389 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 389.3/389.3 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.53.1-py3-none-any.whl (387 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 387.5/387.5 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.53.0-py3-none-any.whl (387 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 387.1/387.1 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.52.2-py3-none-any.whl (386 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 386.9/386.9 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.52.1-py3-none-any.whl (386 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 386.9/386.9 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.52.0-py3-none-any.whl (386 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 386.9/386.9 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.51.2-py3-none-any.whl (383 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 383.7/383.7 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.51.1-py3-none-any.whl (383 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 383.7/383.7 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.51.0-py3-none-any.whl (383 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 383.5/383.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.50.2-py3-none-any.whl (382 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 383.0/383.0 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.50.1-py3-none-any.whl (378 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 378.9/378.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.50.0-py3-none-any.whl (378 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 378.9/378.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.49.0-py3-none-any.whl (378 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 378.1/378.1 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.48.0-py3-none-any.whl (376 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 376.1/376.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.47.1-py3-none-any.whl (375 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 375.6/375.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.47.0-py3-none-any.whl (375 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 375.6/375.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.46.1-py3-none-any.whl (375 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 375.1/375.1 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.46.0-py3-none-any.whl (375 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 375.0/375.0 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.45.1-py3-none-any.whl (374 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 374.2/374.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.45.0-py3-none-any.whl (374 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 374.1/374.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.44.1-py3-none-any.whl (373 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 373.5/373.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.44.0-py3-none-any.whl (367 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 367.8/367.8 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.43.1-py3-none-any.whl (365 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 365.7/365.7 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.43.0-py3-none-any.whl (365 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 365.7/365.7 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.42.0-py3-none-any.whl (362 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 362.9/362.9 kB 2.5 MB/s eta 0:00:00
+
+  Downloading openai-1.41.1-py3-none-any.whl (362 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 362.5/362.5 kB 2.0 MB/s eta 0:00:00
+
+  Downloading openai-1.41.0-py3-none-any.whl (362 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 362.4/362.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.40.8-py3-none-any.whl (361 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 361.5/361.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.40.7-py3-none-any.whl (361 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 361.2/361.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.40.6-py3-none-any.whl (361 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 361.3/361.3 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.40.5-py3-none-any.whl (361 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 361.3/361.3 kB 1.8 MB/s eta 0:00:00
+
+  Downloading openai-1.40.4-py3-none-any.whl (361 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 361.3/361.3 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.40.3-py3-none-any.whl (360 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 360.7/360.7 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.40.2-py3-none-any.whl (360 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 360.7/360.7 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.40.1-py3-none-any.whl (360 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 360.4/360.4 kB 2.5 MB/s eta 0:00:00
+
+  Downloading openai-1.40.0-py3-none-any.whl (360 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 360.4/360.4 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.39.0-py3-none-any.whl (336 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 336.7/336.7 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.38.0-py3-none-any.whl (335 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 335.9/335.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.37.2-py3-none-any.whl (337 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 337.1/337.1 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.37.1-py3-none-any.whl (337 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 337.0/337.0 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.37.0-py3-none-any.whl (337 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 337.0/337.0 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.36.1-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.8/328.8 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.36.0-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.7/328.7 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.15-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.6/328.6 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.35.14-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.5/328.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.13-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.5/328.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.12-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.4/328.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.11-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.4/328.4 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.35.10-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.3/328.3 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.9-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.3/328.3 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.8-py3-none-any.whl (328 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 328.1/328.1 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.35.7-py3-none-any.whl (327 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 327.5/327.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.6-py3-none-any.whl (327 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 327.5/327.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.5-py3-none-any.whl (327 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 327.5/327.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.4-py3-none-any.whl (327 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 327.4/327.4 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.35.3-py3-none-any.whl (327 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 327.4/327.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.2-py3-none-any.whl (327 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 327.4/327.4 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.35.1-py3-none-any.whl (326 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 326.8/326.8 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.35.0-py3-none-any.whl (326 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 326.0/326.0 kB 2.6 MB/s eta 0:00:00
+
+  Downloading openai-1.34.0-py3-none-any.whl (325 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 325.5/325.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.33.0-py3-none-any.whl (325 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 325.5/325.5 kB 2.5 MB/s eta 0:00:00
+
+  Downloading openai-1.32.1-py3-none-any.whl (325 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 325.4/325.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.32.0-py3-none-any.whl (325 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 325.2/325.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.31.2-py3-none-any.whl (324 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 324.1/324.1 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.31.1-py3-none-any.whl (324 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 324.1/324.1 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.31.0-py3-none-any.whl (324 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 324.1/324.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.30.5-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.7/320.7 kB 1.9 MB/s eta 0:00:00
+
+  Downloading openai-1.30.4-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.6/320.6 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.30.3-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.6/320.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.30.2-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.7/320.7 kB 2.6 MB/s eta 0:00:00
+
+  Downloading openai-1.30.1-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.6/320.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.30.0-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.7/320.7 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.29.0-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.3/320.3 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.28.2-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.1/320.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.28.1-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.1/320.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.28.0-py3-none-any.whl (320 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 320.1/320.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.27.0-py3-none-any.whl (314 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 314.1/314.1 kB 2.7 MB/s eta 0:00:00
+
+  Downloading openai-1.26.0-py3-none-any.whl (314 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 314.1/314.1 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.25.2-py3-none-any.whl (312 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 312.9/312.9 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.25.1-py3-none-any.whl (312 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 312.9/312.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.25.0-py3-none-any.whl (312 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 312.9/312.9 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.24.1-py3-none-any.whl (312 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 312.3/312.3 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.24.0-py3-none-any.whl (312 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 312.3/312.3 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.23.6-py3-none-any.whl (311 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.6/311.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.23.5-py3-none-any.whl (311 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.6/311.6 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.23.4-py3-none-any.whl (311 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.6/311.6 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.23.3-py3-none-any.whl (311 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.5/311.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.23.2-py3-none-any.whl (311 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.2/311.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.23.1-py3-none-any.whl (310 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.0/311.0 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.23.0-py3-none-any.whl (311 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.0/311.0 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.22.0-py3-none-any.whl (310 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 311.0/311.0 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.21.2-py3-none-any.whl (309 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 309.9/309.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.21.1-py3-none-any.whl (309 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 309.7/309.7 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.21.0-py3-none-any.whl (308 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 308.7/308.7 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.20.0-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.8/292.8 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.19.0-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.8/292.8 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.18.0-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.8/292.8 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.17.1-py3-none-any.whl (268 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 268.3/268.3 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.17.0-py3-none-any.whl (268 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 268.3/268.3 kB 2.0 MB/s eta 0:00:00
+
+  Downloading openai-1.16.2-py3-none-any.whl (267 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 267.1/267.1 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.16.1-py3-none-any.whl (266 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 266.9/266.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.16.0-py3-none-any.whl (266 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 266.9/266.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.14.3-py3-none-any.whl (262 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 262.9/262.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.14.2-py3-none-any.whl (262 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 262.4/262.4 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.14.1-py3-none-any.whl (257 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 257.5/257.5 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.14.0-py3-none-any.whl (257 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 257.5/257.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.13.4-py3-none-any.whl (230 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 230.5/230.5 kB 2.5 MB/s eta 0:00:00
+
+  Downloading openai-1.13.3-py3-none-any.whl (227 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 227.4/227.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.12.0-py3-none-any.whl (226 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 226.7/226.7 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.11.1-py3-none-any.whl (226 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 226.1/226.1 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.11.0-py3-none-any.whl (226 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 226.0/226.0 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.10.0-py3-none-any.whl (225 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 225.1/225.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.9.0-py3-none-any.whl (223 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 223.4/223.4 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.8.0-py3-none-any.whl (222 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 222.3/222.3 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.7.2-py3-none-any.whl (212 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 212.1/212.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.7.1-py3-none-any.whl (224 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 224.9/224.9 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.7.0-py3-none-any.whl (224 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 224.7/224.7 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.6.1-py3-none-any.whl (225 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 225.4/225.4 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.6.0-py3-none-any.whl (225 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 225.4/225.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.5.0-py3-none-any.whl (223 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 223.7/223.7 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.4.0-py3-none-any.whl (221 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 221.9/221.9 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.3.9-py3-none-any.whl (221 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 221.4/221.4 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.3.8-py3-none-any.whl (221 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 221.5/221.5 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.3.7-py3-none-any.whl (221 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 221.4/221.4 kB 2.1 MB/s eta 0:00:00
+
+Collecting anyio<4,>=3.5.0 (from openai)
+  Downloading anyio-3.7.1-py3-none-any.whl (80 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 80.9/80.9 kB 1.9 MB/s eta 0:00:00
+
+Collecting openai
+  Downloading openai-1.3.6-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.9/220.9 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.3.5-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.8/220.8 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.3.4-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.5/220.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.3.3-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.3/220.3 kB 2.4 MB/s eta 0:00:00
+
+  Downloading openai-1.3.2-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.3/220.3 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.3.1-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.3/220.3 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.3.0-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.3/220.3 kB 1.9 MB/s eta 0:00:00
+
+  Downloading openai-1.2.4-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.2/220.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.2.3-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.3/220.3 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.2.2-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.3/220.3 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.2.1-py3-none-any.whl (220 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 220.2/220.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.2.0-py3-none-any.whl (219 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 219.9/219.9 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-1.1.2-py3-none-any.whl (217 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 217.9/217.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.1.1-py3-none-any.whl (217 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 217.8/217.8 kB 2.3 MB/s eta 0:00:00
+
+  Downloading openai-1.1.0-py3-none-any.whl (217 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 217.5/217.5 kB 2.5 MB/s eta 0:00:00
+
+  Downloading openai-1.0.1-py3-none-any.whl (153 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 153.9/153.9 kB 2.1 MB/s eta 0:00:00
+
+  Downloading openai-1.0.0-py3-none-any.whl (154 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 154.1/154.1 kB 2.2 MB/s eta 0:00:00
+
+  Downloading openai-0.28.1-py3-none-any.whl (76 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 77.0/77.0 kB 2.4 MB/s eta 0:00:00
+
+Requirement already satisfied: tqdm in /Users/kv.kn/Library/Python/3.9/lib/python/site-packages (from openai) (4.65.0)
+Collecting aiohttp (from openai)
+  Using cached aiohttp-3.13.2-cp39-cp39-macosx_11_0_arm64.whl (490 kB)
+Collecting docstring-parser<1,>=0.15 (from anthropic)
+  Using cached docstring_parser-0.17.0-py3-none-any.whl (36 kB)
+INFO: pip is looking at multiple versions of anthropic to determine which version is compatible with other requirements. This could take a while.
+Collecting anthropic
+  Downloading anthropic-0.74.1-py3-none-any.whl (371 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 371.5/371.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.74.0-py3-none-any.whl (371 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 371.5/371.5 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.73.0-py3-none-any.whl (367 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 367.8/367.8 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.72.1-py3-none-any.whl (357 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 357.4/357.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.72.0-py3-none-any.whl (357 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 357.5/357.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.71.1-py3-none-any.whl (355 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 355.0/355.0 kB 3.0 MB/s eta 0:00:00
+
+  Downloading anthropic-0.71.0-py3-none-any.whl (355 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 355.0/355.0 kB 2.2 MB/s eta 0:00:00
+
+INFO: pip is looking at multiple versions of anthropic to determine which version is compatible with other requirements. This could take a while.
+  Downloading anthropic-0.70.0-py3-none-any.whl (337 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 337.3/337.3 kB 1.0 MB/s eta 0:00:00
+
+  Downloading anthropic-0.69.0-py3-none-any.whl (337 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 337.3/337.3 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.68.2-py3-none-any.whl (325 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 325.2/325.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.68.1-py3-none-any.whl (325 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 325.2/325.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.68.0-py3-none-any.whl (325 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 325.2/325.2 kB 2.2 MB/s eta 0:00:00
+
+INFO: This is taking longer than usual. You might need to provide the dependency resolver with stricter constraints to reduce runtime. See https://pip.pypa.io/warnings/backtracking for guidance. If you want to abort this run, press Ctrl + C.
+  Downloading anthropic-0.67.0-py3-none-any.whl (317 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 317.1/317.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.66.0-py3-none-any.whl (308 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 308.0/308.0 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.65.0-py3-none-any.whl (307 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 308.0/308.0 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.64.0-py3-none-any.whl (297 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 297.2/297.2 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.63.0-py3-none-any.whl (296 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 296.6/296.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.62.0-py3-none-any.whl (296 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 296.6/296.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.61.0-py3-none-any.whl (294 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 294.9/294.9 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.60.0-py3-none-any.whl (293 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 293.1/293.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.59.0-py3-none-any.whl (293 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 293.1/293.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.58.2-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.9/292.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.58.1-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.9/292.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.58.0-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.9/292.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.57.1-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.8/292.8 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.57.0-py3-none-any.whl (292 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 292.8/292.8 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.56.0-py3-none-any.whl (289 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 289.6/289.6 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.55.0-py3-none-any.whl (289 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 289.3/289.3 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.54.0-py3-none-any.whl (288 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 288.8/288.8 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.53.0-py3-none-any.whl (287 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 287.2/287.2 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.52.2-py3-none-any.whl (286 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 286.3/286.3 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.52.1-py3-none-any.whl (286 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 286.1/286.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.52.0-py3-none-any.whl (286 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 286.1/286.1 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.51.0-py3-none-any.whl (263 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 264.0/264.0 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.50.0-py3-none-any.whl (245 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 245.3/245.3 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.49.0-py3-none-any.whl (243 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 243.4/243.4 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.48.0-py3-none-any.whl (242 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 242.4/242.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.47.2-py3-none-any.whl (239 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 239.5/239.5 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.47.1-py3-none-any.whl (239 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 239.5/239.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.47.0-py3-none-any.whl (239 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 239.5/239.5 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.46.0-py3-none-any.whl (223 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 223.2/223.2 kB 2.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.45.2-py3-none-any.whl (222 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 222.8/222.8 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.45.1-py3-none-any.whl (222 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 222.6/222.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.45.0-py3-none-any.whl (222 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 222.3/222.3 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.44.0-py3-none-any.whl (208 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 208.6/208.6 kB 1.6 MB/s eta 0:00:00
+
+  Downloading anthropic-0.43.1-py3-none-any.whl (208 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 208.2/208.2 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.43.0-py3-none-any.whl (207 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 207.9/207.9 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.42.0-py3-none-any.whl (203 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 203.4/203.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.41.0-py3-none-any.whl (203 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 203.4/203.4 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.40.0-py3-none-any.whl (199 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 199.5/199.5 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.39.0-py3-none-any.whl (198 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 198.4/198.4 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.38.0-py3-none-any.whl (951 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 951.5/951.5 kB 2.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.37.1-py3-none-any.whl (945 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 946.0/946.0 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.37.0-py3-none-any.whl (945 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 945.9/945.9 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.36.2-py3-none-any.whl (939 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 939.6/939.6 kB 2.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.36.1-py3-none-any.whl (939 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 939.8/939.8 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.36.0-py3-none-any.whl (939 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 939.7/939.7 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.35.0-py3-none-any.whl (894 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 894.0/894.0 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.34.2-py3-none-any.whl (891 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 891.9/891.9 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.34.1-py3-none-any.whl (891 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 891.5/891.5 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.34.0-py3-none-any.whl (891 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 891.5/891.5 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.33.1-py3-none-any.whl (866 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 866.9/866.9 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.33.0-py3-none-any.whl (866 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 866.9/866.9 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.32.0-py3-none-any.whl (866 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 866.6/866.6 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.31.2-py3-none-any.whl (865 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 865.5/865.5 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.31.1-py3-none-any.whl (865 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 865.4/865.4 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.31.0-py3-none-any.whl (865 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 865.4/865.4 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.30.1-py3-none-any.whl (863 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 863.9/863.9 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.30.0-py3-none-any.whl (863 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 863.5/863.5 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.29.2-py3-none-any.whl (863 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 863.5/863.5 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.29.0-py3-none-any.whl (863 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 863.5/863.5 kB 2.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.28.1-py3-none-any.whl (862 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 862.7/862.7 kB 1.6 MB/s eta 0:00:00
+
+  Downloading anthropic-0.28.0-py3-none-any.whl (862 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 862.7/862.7 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.27.0-py3-none-any.whl (863 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 863.8/863.8 kB 2.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.26.1-py3-none-any.whl (877 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 877.6/877.6 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.26.0-py3-none-any.whl (877 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 877.7/877.7 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.9-py3-none-any.whl (871 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 871.1/871.1 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.8-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.8/870.8 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.7-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.8/870.8 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.6-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.7/870.7 kB 2.6 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.5-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.7/870.7 kB 2.5 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.4-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.7/870.7 kB 2.6 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.3-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.6/870.6 kB 2.7 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.2-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.5/870.5 kB 2.8 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.1-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.5/870.5 kB 2.8 MB/s eta 0:00:00
+
+  Downloading anthropic-0.25.0-py3-none-any.whl (870 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.5/870.5 kB 2.9 MB/s eta 0:00:00
+
+  Downloading anthropic-0.24.0-py3-none-any.whl (869 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 870.0/870.0 kB 3.0 MB/s eta 0:00:00
+
+  Downloading anthropic-0.23.1-py3-none-any.whl (869 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 869.1/869.1 kB 2.8 MB/s eta 0:00:00
+
+  Downloading anthropic-0.23.0-py3-none-any.whl (869 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 869.1/869.1 kB 2.9 MB/s eta 0:00:00
+
+  Downloading anthropic-0.22.1-py3-none-any.whl (852 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 852.4/852.4 kB 3.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.22.0-py3-none-any.whl (852 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 852.0/852.0 kB 3.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.21.3-py3-none-any.whl (851 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 851.6/851.6 kB 3.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.21.2-py3-none-any.whl (851 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 851.6/851.6 kB 3.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.21.1-py3-none-any.whl (851 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 851.2/851.2 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.21.0-py3-none-any.whl (851 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 851.2/851.2 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.20.0-py3-none-any.whl (850 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 850.5/850.5 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.19.2-py3-none-any.whl (850 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 850.2/850.2 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.19.1-py3-none-any.whl (848 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 848.6/848.6 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.19.0-py3-none-any.whl (848 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 848.6/848.6 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.18.1-py3-none-any.whl (848 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 848.1/848.1 kB 3.9 MB/s eta 0:00:00
+
+  Downloading anthropic-0.18.0-py3-none-any.whl (848 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 848.2/848.2 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.17.0-py3-none-any.whl (848 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 848.2/848.2 kB 4.0 MB/s eta 0:00:00
+
+  Downloading anthropic-0.16.0-py3-none-any.whl (846 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 846.4/846.4 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.15.1-py3-none-any.whl (848 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 848.1/848.1 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.15.0-py3-none-any.whl (847 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 847.9/847.9 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.14.1-py3-none-any.whl (846 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 846.7/846.7 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.14.0-py3-none-any.whl (846 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 846.7/846.7 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.13.0-py3-none-any.whl (841 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 841.5/841.5 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.12.0-py3-none-any.whl (840 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 840.6/840.6 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.11.0-py3-none-any.whl (840 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 840.6/840.6 kB 4.0 MB/s eta 0:00:00
+
+  Downloading anthropic-0.10.0-py3-none-any.whl (834 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 834.4/834.4 kB 3.8 MB/s eta 0:00:00
+
+  Downloading anthropic-0.9.0-py3-none-any.whl (826 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 826.9/826.9 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.8.1-py3-none-any.whl (826 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 826.7/826.7 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.8.0-py3-none-any.whl (827 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 827.3/827.3 kB 4.3 MB/s eta 0:00:00
+
+  Using cached anthropic-0.7.8-py3-none-any.whl (807 kB)
+  Downloading anthropic-0.7.7-py3-none-any.whl (808 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 808.1/808.1 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.7.6-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.9/807.9 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.7.5-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.9/807.9 kB 4.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.7.4-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.8/807.8 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.7.3-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.8/807.8 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.7.2-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.6/807.6 kB 4.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.7.1-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.6/807.6 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.7.0-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.6/807.6 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.6.0-py3-none-any.whl (807 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.6/807.6 kB 4.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.5.0-py3-none-any.whl (801 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 801.8/801.8 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.4.1-py3-none-any.whl (801 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 801.9/801.9 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.11-py3-none-any.whl (796 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 796.3/796.3 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.10-py3-none-any.whl (796 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 796.3/796.3 kB 3.8 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.9-py3-none-any.whl (794 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 794.3/794.3 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.8-py3-none-any.whl (794 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 794.1/794.1 kB 5.6 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.7-py3-none-any.whl (794 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 794.0/794.0 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.6-py3-none-any.whl (793 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 793.6/793.6 kB 4.3 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.5-py3-none-any.whl (793 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 793.6/793.6 kB 3.7 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.4-py3-none-any.whl (793 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 793.6/793.6 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.3-py3-none-any.whl (795 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 795.5/795.5 kB 4.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.2-py3-none-any.whl (795 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 795.5/795.5 kB 4.4 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.1-py3-none-any.whl (795 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 795.5/795.5 kB 4.2 MB/s eta 0:00:00
+
+  Downloading anthropic-0.3.0-py3-none-any.whl (795 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 795.4/795.4 kB 4.1 MB/s eta 0:00:00
+
+  Downloading anthropic-0.2.10-py3-none-any.whl (6.3 kB)
+Collecting tokenizers (from anthropic)
+  Using cached tokenizers-0.22.1-cp39-abi3-macosx_11_0_arm64.whl (2.9 MB)
+Collecting charset_normalizer<4,>=2 (from requests)
+  Using cached charset_normalizer-3.4.4-cp39-cp39-macosx_10_9_universal2.whl (209 kB)
+Collecting urllib3<3,>=1.21.1 (from requests)
+  Using cached urllib3-2.6.2-py3-none-any.whl (131 kB)
+Collecting aiohappyeyeballs>=2.5.0 (from aiohttp->openai)
+  Using cached aiohappyeyeballs-2.6.1-py3-none-any.whl (15 kB)
+Collecting aiosignal>=1.4.0 (from aiohttp->openai)
+  Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Collecting async-timeout<6.0,>=4.0 (from aiohttp->openai)
+  Using cached async_timeout-5.0.1-py3-none-any.whl (6.2 kB)
+Collecting attrs>=17.3.0 (from aiohttp->openai)
+  Using cached attrs-25.4.0-py3-none-any.whl (67 kB)
+Collecting frozenlist>=1.1.1 (from aiohttp->openai)
+  Using cached frozenlist-1.8.0-cp39-cp39-macosx_11_0_arm64.whl (50 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp->openai)
+  Using cached multidict-6.7.0-cp39-cp39-macosx_11_0_arm64.whl (44 kB)
+Collecting propcache>=0.2.0 (from aiohttp->openai)
+  Using cached propcache-0.4.1-cp39-cp39-macosx_11_0_arm64.whl (47 kB)
+Collecting yarl<2.0,>=1.17.0 (from aiohttp->openai)
+  Using cached yarl-1.22.0-cp39-cp39-macosx_11_0_arm64.whl (94 kB)
+Collecting huggingface-hub<2.0,>=0.16.4 (from tokenizers->anthropic)
+  Using cached huggingface_hub-1.2.3-py3-none-any.whl (520 kB)
+Requirement already satisfied: typing-extensions>=4.2 in /Users/kv.kn/Library/Python/3.9/lib/python/site-packages (from aiosignal>=1.4.0->aiohttp->openai) (4.15.0)
+Requirement already satisfied: filelock in /Users/kv.kn/Library/Python/3.9/lib/python/site-packages (from huggingface-hub<2.0,>=0.16.4->tokenizers->anthropic) (3.12.2)
+Collecting fsspec>=2023.5.0 (from huggingface-hub<2.0,>=0.16.4->tokenizers->anthropic)
+  Using cached fsspec-2025.10.0-py3-none-any.whl (200 kB)
+Collecting hf-xet<2.0.0,>=1.2.0 (from huggingface-hub<2.0,>=0.16.4->tokenizers->anthropic)
+  Using cached hf_xet-1.2.0-cp37-abi3-macosx_11_0_arm64.whl (2.7 MB)
+INFO: pip is looking at multiple versions of huggingface-hub to determine which version is compatible with other requirements. This could take a while.
+Collecting huggingface-hub<2.0,>=0.16.4 (from tokenizers->anthropic)
+  Downloading huggingface_hub-1.2.2-py3-none-any.whl (520 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 521.0/521.0 kB 4.5 MB/s eta 0:00:00
+
+  Downloading huggingface_hub-1.2.1-py3-none-any.whl (520 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 520.9/520.9 kB 4.0 MB/s eta 0:00:00
+
+  Downloading huggingface_hub-1.2.0-py3-none-any.whl (520 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 520.9/520.9 kB 4.3 MB/s eta 0:00:00
+
+  Using cached huggingface_hub-1.1.7-py3-none-any.whl (516 kB)
+  Using cached huggingface_hub-1.1.6-py3-none-any.whl (516 kB)
+  Downloading huggingface_hub-1.1.5-py3-none-any.whl (516 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 516.0/516.0 kB 4.3 MB/s eta 0:00:00
+
+  Downloading huggingface_hub-1.1.4-py3-none-any.whl (515 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 515.6/515.6 kB 3.9 MB/s eta 0:00:00
+
+INFO: pip is looking at multiple versions of huggingface-hub to determine which version is compatible with other requirements. This could take a while.
+  Downloading huggingface_hub-1.1.3-py3-none-any.whl (515 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 515.5/515.5 kB 3.9 MB/s eta 0:00:00
+
+  Downloading huggingface_hub-1.1.2-py3-none-any.whl (514 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 515.0/515.0 kB 4.1 MB/s eta 0:00:00
+
+  Downloading huggingface_hub-1.1.1-py3-none-any.whl (514 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 514.9/514.9 kB 4.2 MB/s eta 0:00:00
+
+  Downloading huggingface_hub-1.1.0-py3-none-any.whl (514 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 514.9/514.9 kB 4.0 MB/s eta 0:00:00
+
+  Downloading huggingface_hub-1.0.1-py3-none-any.whl (503 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 503.8/503.8 kB 4.0 MB/s eta 0:00:00
+
+INFO: This is taking longer than usual. You might need to provide the dependency resolver with stricter constraints to reduce runtime. See https://pip.pypa.io/warnings/backtracking for guidance. If you want to abort this run, press Ctrl + C.
+  Downloading huggingface_hub-1.0.0-py3-none-any.whl (503 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 503.9/503.9 kB 4.1 MB/s eta 0:00:00
+
+  Using cached huggingface_hub-0.36.0-py3-none-any.whl (566 kB)
+Requirement already satisfied: packaging>=20.9 in /Users/kv.kn/Library/Python/3.9/lib/python/site-packages (from huggingface-hub<2.0,>=0.16.4->tokenizers->anthropic) (25.0)
+Collecting pyyaml>=5.1 (from huggingface-hub<2.0,>=0.16.4->tokenizers->anthropic)
+  Using cached pyyaml-6.0.3-cp39-cp39-macosx_11_0_arm64.whl (174 kB)
+Building wheels for collected packages: googletrans
+  Building wheel for googletrans (setup.py): started
+  Building wheel for googletrans (setup.py): finished with status 'done'
+  Created wheel for googletrans: filename=googletrans-4.0.0rc1-py3-none-any.whl size=17415 sha256=2d0b34e2ab3fe51c3ed2325c96db54a78ef53433fcfb5bbfdbc586a3b1f3e4b1
+  Stored in directory: /Users/kv.kn/Library/Caches/pip/wheels/60/b3/27/d8aff3e2d5c2d0d97a117cdf0d5f13cd121e2c2b5fb49b55a0
+Successfully built googletrans
+Installing collected packages: rfc3986, hyperframe, hpack, h11, chardet, urllib3, sniffio, pyyaml, propcache, multidict, idna, hstspreload, hf-xet, h2, fsspec, frozenlist, charset_normalizer, certifi, attrs, async-timeout, aiohappyeyeballs, yarl, requests, httpcore, aiosignal, huggingface-hub, httpx, aiohttp, tokenizers, openai, googletrans, anthropic
+Successfully installed aiohappyeyeballs-2.6.1 aiohttp-3.13.2 aiosignal-1.4.0 anthropic-0.2.10 async-timeout-5.0.1 attrs-25.4.0 certifi-2025.11.12 chardet-3.0.4 charset_normalizer-3.4.4 frozenlist-1.8.0 fsspec-2025.10.0 googletrans-4.0.0rc1 h11-0.9.0 h2-3.2.0 hf-xet-1.2.0 hpack-3.0.0 hstspreload-2025.1.1 httpcore-0.9.1 httpx-0.13.3 huggingface-hub-0.36.0 hyperframe-5.2.0 idna-2.10 multidict-6.7.0 openai-0.28.1 propcache-0.4.1 pyyaml-6.0.3 requests-2.32.5 rfc3986-1.5.0 sniffio-1.3.1 tokenizers-0.22.1 urllib3-2.6.2 yarl-1.22.0

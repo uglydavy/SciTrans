@@ -1,0 +1,35 @@
+{
+  "domain": "statistics",
+  "direction": "en-fr",
+  "description": "Statistics terms",
+  "total_terms": 25,
+  "terms": {
+    "mean": "moyenne",
+    "median": "médiane",
+    "mode": "mode",
+    "variance": "variance",
+    "standard deviation": "écart-type",
+    "distribution": "distribution",
+    "normal distribution": "distribution normale",
+    "probability": "probabilité",
+    "hypothesis": "hypothèse",
+    "null hypothesis": "hypothèse nulle",
+    "p-value": "valeur p",
+    "confidence interval": "intervalle de confiance",
+    "sample": "échantillon",
+    "population": "population",
+    "correlation": "corrélation",
+    "regression": "régression",
+    "linear regression": "régression linéaire",
+    "outlier": "valeur aberrante",
+    "bias": "biais",
+    "significance": "signification",
+    "statistical significance": "significativité statistique",
+    "Bayesian": "bayésien",
+    "frequentist": "fréquentiste",
+    "maximum likelihood": "maximum de vraisemblance",
+    "random variable": "variable aléatoire"
+  }
+}
+
+
