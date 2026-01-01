@@ -32,6 +32,90 @@ def _deterministic_block_id(page_index: int, bbox: BBox, text_content: str) -> s
     return f"b_{page_index}_{block_hash}"
 
 
+def _detect_and_tag_headers_titles(blocks: list[Block]) -> None:
+    """Detect headers and titles based on font size, styling, and text patterns.
+    
+    Tags blocks with:
+    - "block_type": "title" (very large font, typically at top)
+    - "block_type": "header" (large font, bold, section headers)
+    - "block_type": "subheader" (medium font, bold)
+    """
+    import re
+    
+    for block in blocks:
+        if block.type != "text" or not block.lines:
+            continue
+        
+        # Get dominant font size and style from all spans
+        font_sizes = []
+        bold_count = 0
+        total_spans = 0
+        
+        for line in block.lines:
+            for span in line.spans:
+                if span.style.size:
+                    font_sizes.append(float(span.style.size))
+                if span.style.flags and (span.style.flags & (2**4)):  # FLAG_BOLD
+                    bold_count += 1
+                total_spans += 1
+        
+        if not font_sizes:
+            continue
+        
+        avg_font_size = sum(font_sizes) / len(font_sizes)
+        max_font_size = max(font_sizes)
+        is_bold = bold_count > total_spans * 0.5  # More than 50% bold
+        
+        # Get block text
+        block_text = ""
+        for line in block.lines:
+            for span in line.spans:
+                block_text += span.text
+        
+        block_text = block_text.strip()
+        
+        # Pattern matching for headers - improved patterns
+        # Match: "1. ", "2)", "1)", "Section 1:", "Section 1", "Chapter 2", etc.
+        is_numbered_section = bool(re.match(r'^\d+[\.\)]\s+', block_text))  # "1. ", "2) "
+        is_section_header = bool(re.match(r'^(Section|Chapter|Part)\s+\d+[:]?\s*', block_text, re.IGNORECASE))
+        # Match numbered lists: "1.", "2.", "3." at start
+        is_numbered_list = bool(re.match(r'^\d+\.\s+[A-Z]', block_text))  # "1. Item", "2. Item"
+        # Match roman numerals: "I.", "II.", "III."
+        is_roman_numeral = bool(re.match(r'^[IVX]+\.\s+', block_text, re.IGNORECASE))
+        is_short_uppercase = len(block_text) < 50 and block_text.isupper() and len(block_text.split()) <= 5
+        
+        # Classify block type
+        if max_font_size >= 18 or (max_font_size >= 16 and is_bold and len(block_text) < 100):
+            # Very large font = title
+            block.meta["block_type"] = "title"
+            block.meta["is_header"] = True
+        elif max_font_size >= 14 or (max_font_size >= 12 and is_bold and (is_numbered_section or is_section_header)):
+            # Large font or bold numbered section = header
+            block.meta["block_type"] = "header"
+            block.meta["is_header"] = True
+        elif max_font_size >= 12 and is_bold:
+            # Medium bold = subheader
+            block.meta["block_type"] = "subheader"
+            block.meta["is_header"] = True
+        elif is_numbered_section or is_section_header or is_numbered_list or is_roman_numeral or is_short_uppercase:
+            # Pattern-based detection
+            block.meta["block_type"] = "header"
+            block.meta["is_header"] = True
+            # Tag numbering type for preservation
+            if is_numbered_section or is_section_header:
+                block.meta["has_section_number"] = True
+            if is_numbered_list:
+                block.meta["has_list_number"] = True
+            if is_roman_numeral:
+                block.meta["has_roman_numeral"] = True
+        
+        # Store font info for rendering
+        if font_sizes:
+            block.meta["avg_font_size"] = avg_font_size
+            block.meta["max_font_size"] = max_font_size
+            block.meta["is_bold"] = is_bold
+
+
 def _sort_blocks_by_reading_order(blocks: list[Block]) -> list[Block]:
     """Sort blocks by reading order: top-to-bottom, then left-to-right.
 
@@ -150,6 +234,9 @@ def parse_pdf(path: str, use_layout_intelligence: bool = True) -> Document:
                 b.meta["region"] = "table"
             for b in captions:
                 b.meta["region"] = "caption"
+            
+            # Detect and tag headers/titles based on styling and patterns
+            _detect_and_tag_headers_titles(blocks)
         else:
             # Simple sorting (PHASE 0)
             blocks = _sort_blocks_by_reading_order(blocks)

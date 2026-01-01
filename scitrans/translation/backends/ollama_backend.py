@@ -38,7 +38,13 @@ class OllamaBackend:
         url = f"{self.host}/api/generate"
 
         # Combine system prompt and user text
-        prompt = f"{req.system_prompt}\n\n{req.text}"
+        # Make it very clear this is a translation task
+        prompt = (
+            f"{req.system_prompt}\n\n"
+            f"TRANSLATE THE FOLLOWING TEXT FROM {req.source_lang.upper()} TO {req.target_lang.upper()}:\n\n"
+            f"{req.text}\n\n"
+            f"Output ONLY the translated text in {req.target_lang.upper()}, preserving all placeholders."
+        )
 
         payload = {
             "model": self.model,

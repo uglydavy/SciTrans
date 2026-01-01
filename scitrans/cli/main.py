@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
+
+# Suppress harmless RuntimeWarning about module import order when running as entry point
+# This warning occurs because runpy imports the module before executing it, which is expected behavior
+warnings.filterwarnings(
+    "ignore",
+    category=RuntimeWarning,
+    message=".*found in sys.modules after import of package.*",
+)
 
 from scitrans.logging_config import setup_logging
 from scitrans.pipeline import PipelineConfig, repair_failed_blocks, run_pipeline

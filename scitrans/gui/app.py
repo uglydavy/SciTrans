@@ -251,7 +251,7 @@ def translate_pdf(
     try:
         output_path = Path(input_path).with_stem(f"{Path(input_path).stem}_{target}")
 
-        log_system(f"Starting translation: {backend}/{model}, {source} -> {target}")
+        log_system(f"Starting translation: {backend}/{model}, {source} -> {target}", "INFO")
         progress(0.2, desc="Initializing backend...")
 
         be = _get_backend(backend, model)
@@ -280,7 +280,7 @@ def translate_pdf(
         log_system("Translation pipeline started")
 
         report = run_pipeline(
-            input_pdf=str(input_path), output_pdf=str(output_path), backend=be, cfg=cfg
+            input_pdf=str(input_path), output_pdf=str(output_path), backend=be, cfg=cfg, progress=progress
         )
 
         progress(1.0, desc="Translation complete!")
@@ -789,7 +789,12 @@ def create_gui():
                         gr.Markdown("### Input")
                         with gr.Tabs():
                             with gr.Tab("Upload PDF"):
-                                pdf_input = gr.File(label="Upload PDF", file_types=[".pdf"])
+                                pdf_input = gr.File(
+                                    label="Upload PDF",
+                                    file_types=[".pdf"],
+                                    file_count="single",
+                                    height=100,
+                                )
                             with gr.Tab("Fetch from URL"):
                                 pdf_url = gr.Textbox(
                                     label="PDF URL",
@@ -1216,6 +1221,7 @@ Ablation studies help you understand the impact of different features on transla
                                         backend=be,
                                         cfg=cfg,
                                         glossary=glossary_dict,
+                                        progress=None,  # Ablation studies don't use progress
                                     )
 
                                     results_data.append(

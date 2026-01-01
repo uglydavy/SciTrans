@@ -62,36 +62,33 @@ def extract_bullet_character(text: str) -> tuple[str, str]:
 
 
 def preserve_bullet_in_translation(source_text: str, translated_text: str) -> str:
-    """Ensure bullet characters are preserved in translation.
+    """Ensure bullet characters are preserved in translation ONLY where they exist in source.
 
-    LLMs / MT systems sometimes replace bullets with numbering or drop them.
-    We detect bullets in the *source* and inject the same bullet into translated lines.
+    CRITICAL: Only preserve bullets where they exist in the source - do NOT add bullets
+    to paragraphs that don't have them. This prevents adding hyphens to regular paragraphs.
     """
 
-    # Detect bullet character from source
-    bullet_char = None
-    bullets = ["•", "-", "*", "·", "▪", "▫"]
+    # Split source and translation into lines
+    source_lines = [line.strip() for line in source_text.split("\n") if line.strip()]
+    trans_lines = [line.strip() for line in translated_text.split("\n") if line.strip()]
 
-    for bullet in bullets:
-        if bullet in source_text:
-            bullet_char = bullet
-            break
-
-    if not bullet_char:
-        source_lines = source_text.split("\n")
-        for line in source_lines:
-            bullet, _ = extract_bullet_character(line.strip())
-            if bullet:
-                bullet_char = bullet
-                break
-
-    if not bullet_char:
+    # If no line breaks, return translation as-is (single paragraph)
+    if len(source_lines) <= 1 and len(trans_lines) <= 1:
         return translated_text
 
-    # Split into lines
-    trans_lines = [line.strip() for line in translated_text.split("\n")]
+    # Map source lines to their bullet status
+    source_line_bullets = {}
+    bullets = ["•", "-", "*", "·", "▪", "▫"]
+    
+    for i, src_line in enumerate(source_lines):
+        bullet_char, _ = extract_bullet_character(src_line)
+        source_line_bullets[i] = bullet_char  # Store bullet char for this line, or "" if none
 
-    # Filter out empty lines and typical LLM instruction spillover
+    # If source has no bullets at all, return translation as-is
+    if not any(source_line_bullets.values()):
+        return translated_text
+
+    # Filter out LLM instruction spillover from translation
     filtered_lines: list[str] = []
     for line in trans_lines:
         if not line:
@@ -104,40 +101,54 @@ def preserve_bullet_in_translation(source_text: str, translated_text: str) -> st
                 "ne pas traduire",
                 "critique",
                 "do not translate",
+                "je suis ravi",  # Generic responses
+                "pouvez-vous",
+                "comment puis-je",
             ]
         ):
             continue
         filtered_lines.append(line)
 
+    # Match translation lines to source lines (best effort)
     result_lines: list[str] = []
-    for trans_line in filtered_lines:
+    for i, trans_line in enumerate(filtered_lines):
         if not trans_line.strip():
             continue
 
-        trans_bullet, _ = extract_bullet_character(trans_line)
+        # Check if this line should have a bullet based on source
+        # Try to match by position (if same number of lines) or by content similarity
+        should_have_bullet = ""
+        if i < len(source_lines):
+            # Same position - use source bullet status
+            should_have_bullet = source_line_bullets.get(i, "")
+        else:
+            # Extra lines in translation - check if any source line had a bullet
+            # Only add bullet if most source lines had bullets (likely a list)
+            bullets_in_source = sum(1 for b in source_line_bullets.values() if b)
+            if bullets_in_source > len(source_lines) * 0.5:  # More than 50% had bullets
+                # Use the most common bullet from source
+                bullet_chars = [b for b in source_line_bullets.values() if b]
+                if bullet_chars:
+                    should_have_bullet = bullet_chars[0]  # Use first found bullet type
 
-        if trans_bullet == bullet_char:
+        # Check if translation line already has a bullet
+        trans_bullet, trans_content = extract_bullet_character(trans_line)
+
+        if should_have_bullet:
+            # Source line had a bullet - ensure translation has it
+            if trans_bullet == should_have_bullet:
+                result_lines.append(trans_line)  # Already has correct bullet
+            elif trans_bullet:
+                # Has different bullet - replace with source bullet
+                result_lines.append(f"{should_have_bullet} {trans_content}")
+            else:
+                # No bullet in translation - add source bullet
+                result_lines.append(f"{should_have_bullet} {trans_line}")
+        else:
+            # Source line had NO bullet - preserve translation as-is (no bullet)
             result_lines.append(trans_line)
-            continue
 
-        # Starts with number like "1." or "2)" → replace with bullet
-        m = re.match(r"^(\d+)[\.)]\s*", trans_line)
-        if m:
-            rest = trans_line[m.end() :]
-            result_lines.append(f"{bullet_char} {rest}")
-            continue
-
-        # Starts with other bullet-like markers
-        m2 = re.match(r"^[*\-]\s+", trans_line)
-        if m2:
-            rest = trans_line[m2.end() :]
-            result_lines.append(f"{bullet_char} {rest}")
-            continue
-
-        # No marker → add bullet
-        result_lines.append(f"{bullet_char} {trans_line}")
-
-    # If translation didn't contain line breaks, keep as single line
+    # If no result lines, return original translation
     if not result_lines:
         return translated_text
 
@@ -173,15 +184,80 @@ def _resolve_font_key(base_font: str, flags: int) -> str:
     return f
 
 
-def _get_block_base_style(block: Block) -> tuple[str, float, int]:
+def _get_block_base_style(block: Block, min_font_size: float = 12.0) -> tuple[str, float, int]:
     """Return (font_name, font_size, flags) for the block.
 
-    Uses the first span of the first line as the baseline.
+    Enhanced extraction:
+    - For headers/titles: Uses max font size and dominant font
+    - For normal text: Uses average font size and most common font
+    - Ensures minimum font size for readability
+    - Preserves bold/italic flags from dominant style
     """
-    if block.lines and block.lines[0].spans:
-        st = block.lines[0].spans[0].style
-        return st.font or "Times-Roman", float(st.size or 11.0), int(st.flags or 0)
-    return "Times-Roman", 11.0, 0
+    if not block.lines:
+        return "Times-Roman", max(11.0, min_font_size), 0
+    
+    # Collect all font info from all spans
+    font_info: list[tuple[str, float, int]] = []
+    for line in block.lines:
+        for span in line.spans:
+            if span.style:
+                font_name = span.style.font or "Times-Roman"
+                font_size = float(span.style.size or 11.0)
+                flags = int(span.style.flags or 0)
+                font_info.append((font_name, font_size, flags))
+    
+    if not font_info:
+        return "Times-Roman", max(11.0, min_font_size), 0
+    
+    # Check if this is a header/title from metadata
+    is_header = block.meta.get("is_header", False)
+    block_type = block.meta.get("block_type", "normal")
+    
+    if is_header or block_type in ("title", "header", "subheader"):
+        # For headers: use max font size and preserve bold
+        max_size = max(f[1] for f in font_info)
+        # Find the span with max size to get its font and flags
+        max_font_info = max(font_info, key=lambda x: x[1])
+        font_name = max_font_info[0]
+        font_size = max(max_size, min_font_size)
+        # Preserve bold flag for headers
+        flags = max_font_info[2]
+        if block_type == "title":
+            # Titles should be bold and larger
+            flags = flags | (2**4)  # FLAG_BOLD
+            font_size = max(font_size, 16.0)
+        elif block_type == "header":
+            flags = flags | (2**4)  # FLAG_BOLD
+            font_size = max(font_size, 14.0)
+        return font_name, font_size, flags
+    else:
+        # For normal text: use most common font and average size
+        # Count font occurrences
+        font_counts: dict[str, int] = {}
+        for f_name, _, _ in font_info:
+            font_counts[f_name] = font_counts.get(f_name, 0) + 1
+        
+        # Get most common font
+        if font_counts:
+            font_name = max(font_counts.items(), key=lambda x: x[1])[0]
+        else:
+            font_name = font_info[0][0]
+        
+        # Average font size
+        avg_size = sum(f[1] for f in font_info) / len(font_info)
+        font_size = max(avg_size, min_font_size)
+        
+        # Most common flags (majority vote)
+        flag_counts: dict[int, int] = {}
+        for _, _, f_flags in font_info:
+            flag_counts[f_flags] = flag_counts.get(f_flags, 0) + 1
+        
+        if flag_counts:
+            flags = max(flag_counts.items(), key=lambda x: x[1])[0]
+        else:
+            flags = font_info[0][2]
+        
+        return font_name, font_size, flags
 
 
 def _should_replace_block(
@@ -200,8 +276,16 @@ def _should_replace_block(
 
     target_text = translations.get(block.id)
 
+    # CRITICAL: Headers/titles should ALWAYS be rendered, even if translation is empty
+    # Use source text as fallback for headers to ensure they appear
+    is_header = block.meta.get("is_header", False)
+    
     # Missing / empty translation → keep original (coverage safety)
     if not target_text or not target_text.strip():
+        # For headers, use source text as fallback (better than nothing)
+        if is_header:
+            logger.warning(f"Block {block.id}: Header translation is empty, using source as fallback")
+            return True, source_text, source_text  # Render source text for headers
         return False, None, source_text
 
     # Identity translation → STILL REPLACE (user wants translation, not source)
@@ -246,9 +330,12 @@ def render_translated_pdf_perfect(
         page = pdf[page_idx]
 
         # 1) Redact only blocks we will replace
+        # CRITICAL: Never touch image blocks - they are preserved automatically
         redacted_any = False
         for block in page_model.blocks:
             if block.type != "text":
+                # Images and other non-text blocks are automatically preserved
+                # PyMuPDF redactions only affect text, so images remain untouched
                 continue
 
             replace, target_text, _source_text = _should_replace_block(
@@ -280,8 +367,8 @@ def render_translated_pdf_perfect(
             # DEBUG: Log what we have for this block (first 2 pages)
             if page_idx < 2:
                 logger.info(f"Page {page_idx+1}, Block {block.id}: Source='{source_text[:50]}...', Stored='{stored_translation[:50] if stored_translation else 'EMPTY'}...'")
-                console.print(f"[cyan]Page {page_idx+1}, Block {block.id}: Source='{source_text[:40]}...'[/cyan]")
-                console.print(f"[cyan]  Stored translation: '{stored_translation[:40] if stored_translation else 'EMPTY'}...'[/cyan]")
+                logger.debug(f"Page {page_idx+1}, Block {block.id}: Source='{source_text[:40]}...'")
+                logger.debug(f"  Stored translation: '{stored_translation[:40] if stored_translation else 'EMPTY'}...'")
 
             replace, target_text, source_text_check = _should_replace_block(
                 block, translations, translate_tables=translate_tables
@@ -290,10 +377,8 @@ def render_translated_pdf_perfect(
                 # DEBUG: Log why block wasn't replaced
                 if block.id not in translations:
                     logger.warning(f"Page {page_idx+1}, Block {block.id}: NO TRANSLATION in dictionary! Source: '{source_text[:50]}...'")
-                    console.print(f"[red]Page {page_idx+1}, Block {block.id}: NO TRANSLATION! Source: '{source_text[:40]}...'[/red]")
                 elif not translations.get(block.id, "").strip():
                     logger.warning(f"Page {page_idx+1}, Block {block.id}: Translation is EMPTY! Source: '{source_text[:50]}...'")
-                    console.print(f"[red]Page {page_idx+1}, Block {block.id}: Translation EMPTY! Source: '{source_text[:40]}...'[/red]")
                 else:
                     stored_trans = translations.get(block.id, "")
                     logger.debug(f"Page {page_idx+1}, Block {block.id}: Not replacing (identity or other reason). Stored: '{stored_trans[:50]}...'")
@@ -302,7 +387,7 @@ def render_translated_pdf_perfect(
             # DEBUG: Log what we're inserting (first 2 pages)
             if page_idx < 2:
                 logger.info(f"Page {page_idx+1}, Block {block.id}: ✅ Inserting translation: '{target_text[:50]}...'")
-                console.print(f"[green]Page {page_idx+1}, Block {block.id}: ✅ Inserting: '{target_text[:40]}...'[/green]")
+                logger.debug(f"Page {page_idx+1}, Block {block.id}: ✅ Inserting: '{target_text[:40]}...'")
 
             # Preserve bullets based on the source block content
             target_text = preserve_bullet_in_translation(source_text, target_text)
