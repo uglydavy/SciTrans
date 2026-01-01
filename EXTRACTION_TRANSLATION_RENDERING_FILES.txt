@@ -1,0 +1,35 @@
+# Files Responsible for Extraction, Translation, and Rendering
+
+## EXTRACTION (PDF Parsing)
+Primary: scitrans/parsing/pymupdf_parser.py
+  - parse_pdf() - Main entry point (line 133)
+  - _detect_and_tag_headers_titles() - Header detection (line 35)
+
+Supporting: scitrans/parsing/layout.py
+  - detect_headers_footers() - Page header/footer detection
+  - detect_tables_and_captions() - Table detection
+  - merge_paragraph_blocks() - Paragraph merging
+
+## TRANSLATION (Backend Calls)
+Primary: scitrans/pipeline.py
+  - run_pipeline() - Main orchestration (line 83)
+  - Translation loop (lines 246-700)
+  - Header retry logic (lines 497-650)
+
+Backends: scitrans/translation/backends/
+  - cascade_free.py - Ensemble backend
+  - google_backend.py - Google Translate
+  - ollama_backend.py - Local Ollama
+  - deepseek_backend.py - DeepSeek API
+
+Prompt: scitrans/translation/prompting.py
+  - build_system_prompt() - Translation instructions
+
+## RENDERING (PDF Output)
+Primary: scitrans/rendering/perfect_renderer.py
+  - render_translated_pdf_perfect() - Main renderer (line 296)
+  - _should_replace_block() - Replacement decision (line 263)
+  - _get_block_base_style() - Font extraction (line 187)
+
+Alternative: scitrans/rendering/enhanced_block_renderer.py
+  - render_translated_pdf_enhanced() - Enhanced mode
