@@ -1,18 +1,17 @@
 """
-Parallel translation helper functions for pipeline.
+Parallel Translation Pipeline
 
-This module provides parallel translation capabilities while respecting
-context window dependencies.
+Provides parallel block translation for improved performance on large documents.
 """
 
 from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable
+from typing import Any, Callable, Optional
 
 from scitrans.core.models import MaskedBlock
-from scitrans.translation.backends.base import TranslateRequest, TranslationBackend
+from scitrans.translation.backends.base import TranslationBackend, TranslateRequest
 
 logger = logging.getLogger(__name__)
 
@@ -20,121 +19,102 @@ logger = logging.getLogger(__name__)
 def translate_block_parallel(
     mb: MaskedBlock,
     backend: TranslationBackend,
-    req_factory: Callable[[MaskedBlock, str], TranslateRequest],
-    context_text: str = "",
-) -> tuple[str, dict]:
+    translate_func: Callable[[MaskedBlock], tuple[list[str], dict]],
+    block_index: int,
+    total_blocks: int,
+) -> tuple[MaskedBlock, list[str], dict, Optional[Exception]]:
     """
-    Translate a single block (for parallel execution).
+    Translate a single block (for use in parallel execution).
+
+    Args:
+        mb: Masked block to translate
+        backend: Translation backend
+        translate_func: Function that performs the actual translation
+        block_index: Index of this block (for logging)
+        total_blocks: Total number of blocks (for logging)
 
     Returns:
-        Tuple of (translated_text, metadata)
+        Tuple of (masked_block, candidates, metadata, error)
     """
     try:
-        req = req_factory(mb, context_text)
-        res = backend.translate(req)
-        candidates = res.candidates if res.candidates else [""]
-        meta = {
-            "backend": backend.name,
-            "model": getattr(backend, "model", "unknown"),
-            "cached": False,
-            **res.meta,
-        }
-        return candidates[0] if candidates else "", meta
+        logger.debug(f"Parallel: Translating block {mb.block_id} ({block_index+1}/{total_blocks})")
+        candidates, metadata = translate_func(mb)
+        return mb, candidates, metadata, None
     except Exception as e:
-        logger.warning(f"Translation failed for block {mb.block_id}: {e}")
-        return "", {
-            "backend": backend.name,
-            "model": getattr(backend, "model", "unknown"),
-            "cached": False,
-            "error": str(e),
-        }
+        logger.error(f"Parallel: Error translating block {mb.block_id}: {e}", exc_info=True)
+        return mb, [], {"error": str(e), "error_type": type(e).__name__}, e
 
 
-def translate_blocks_parallel(
+def run_parallel_translation(
     masked_blocks: list[MaskedBlock],
+    translate_func: Callable[[MaskedBlock], tuple[list[str], dict]],
     backend: TranslationBackend,
-    req_factory: Callable[[MaskedBlock, str], TranslateRequest],
     max_workers: int = 4,
-    context_window: int = 0,
-) -> list[tuple[MaskedBlock, str, dict]]:
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> dict[str, tuple[list[str], dict]]:
     """
-    Translate blocks in parallel while respecting context window.
+    Translate blocks in parallel using ThreadPoolExecutor.
 
-    Strategy:
-    - If context_window == 0: Translate all blocks in parallel
-    - If context_window > 0: Use sliding window approach
-      - Process blocks in batches
-      - Each batch can be parallelized
-      - Next batch depends on previous batch
+    Args:
+        masked_blocks: List of masked blocks to translate
+        translate_func: Function that translates a single block
+        backend: Translation backend (for logging)
+        max_workers: Maximum number of parallel workers
+        progress_callback: Optional callback(completed, total) for progress updates
 
     Returns:
-        List of (MaskedBlock, translated_text, metadata) tuples in original order
+        Dictionary mapping block_id -> (candidates, metadata)
     """
-    if context_window == 0:
-        # No context dependencies - full parallelization
-        results = {}
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(translate_block_parallel, mb, backend, req_factory, ""): mb
-                for mb in masked_blocks
-            }
+    if not masked_blocks:
+        return {}
 
-            for future in as_completed(futures):
-                mb = futures[future]
-                try:
-                    translated, meta = future.result()
-                    results[mb.block_id] = (mb, translated, meta)
-                except Exception as e:
-                    logger.error(f"Error translating block {mb.block_id}: {e}")
-                    results[mb.block_id] = (mb, "", {"error": str(e)})
+    logger.info(f"Starting parallel translation of {len(masked_blocks)} blocks with {max_workers} workers")
 
-        # Return in original order
-        return [results[mb.block_id] for mb in masked_blocks]
+    results: dict[str, tuple[list[str], dict]] = {}
+    completed = 0
+    errors = 0
 
-    else:
-        # Context window creates dependencies - use sliding window
-        results = {}
-        context_buffer: list[str] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_block = {
+            executor.submit(
+                translate_block_parallel,
+                mb,
+                backend,
+                translate_func,
+                idx,
+                len(masked_blocks),
+            ): mb
+            for idx, mb in enumerate(masked_blocks)
+        }
 
-        # Process in batches
-        batch_size = max(1, max_workers)
+        # Process completed tasks as they finish
+        for future in as_completed(future_to_block):
+            mb = future_to_block[future]
+            try:
+                _, candidates, metadata, error = future.result()
 
-        for i in range(0, len(masked_blocks), batch_size):
-            batch = masked_blocks[i : i + batch_size]
+                if error:
+                    errors += 1
+                    logger.warning(f"Block {mb.block_id} failed: {error}")
+                    results[mb.block_id] = ([], metadata)
+                else:
+                    results[mb.block_id] = (candidates, metadata)
+                    logger.debug(f"Block {mb.block_id} completed: {len(candidates)} candidates")
 
-            # Build context for this batch
-            context_text = ""
-            if context_buffer:
-                context_parts = context_buffer[-context_window:]
-                context_text = "\n\n".join(context_parts)
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, len(masked_blocks))
 
-            # Translate batch in parallel
-            batch_results = {}
-            with ThreadPoolExecutor(max_workers=min(len(batch), max_workers)) as executor:
-                futures = {
-                    executor.submit(
-                        translate_block_parallel, mb, backend, req_factory, context_text
-                    ): mb
-                    for mb in batch
-                }
+            except Exception as e:
+                errors += 1
+                logger.error(f"Unexpected error processing block {mb.block_id}: {e}", exc_info=True)
+                results[mb.block_id] = ([], {"error": str(e), "error_type": type(e).__name__})
 
-                for future in as_completed(futures):
-                    mb = futures[future]
-                    try:
-                        translated, meta = future.result()
-                        batch_results[mb.block_id] = (mb, translated, meta)
-                    except Exception as e:
-                        logger.error(f"Error translating block {mb.block_id}: {e}")
-                        batch_results[mb.block_id] = (mb, "", {"error": str(e)})
+    logger.info(
+        f"Parallel translation complete: {completed}/{len(masked_blocks)} blocks, "
+        f"{errors} errors, {len(masked_blocks) - completed} remaining"
+    )
 
-            # Update results and context buffer
-            for mb in batch:
-                mb_result, translated, meta = batch_results[mb.block_id]
-                results[mb.block_id] = (mb_result, translated, meta)
-                if translated.strip():
-                    context_buffer.append(translated)
-                    if len(context_buffer) > context_window * 2:
-                        context_buffer = context_buffer[-context_window:]
+    return results
 
-        # Return in original order
-        return [results[mb.block_id] for mb in masked_blocks]

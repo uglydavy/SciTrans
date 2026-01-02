@@ -11,14 +11,18 @@ class CascadeFreeBackend:
 
     Strategy:
     1. Generate translations from multiple free backends:
-       - HuggingFace (opus-mt, nllb)
-       - Google Translate (free)
        - Ollama (if available locally)
-    2. Use reranking to select best translation
-    3. Apply glossary enforcement
-    4. Use caching for efficiency
+       - Google Translate (free)
+    2. Uses BOTH ollama & google together (not fallback - both run in parallel)
+    3. Use reranking to select best translation
+    4. Apply glossary enforcement
+    5. Use caching for efficiency
 
     This provides production-quality results at zero API cost.
+    
+    NOTE: cascade_free uses ollama & google TOGETHER (parallel execution).
+    Other backends (openai, deepseek, etc.) only fallback to ollama/google
+    if the primary backend fails or is unavailable.
     """
 
     name = "cascade_free"

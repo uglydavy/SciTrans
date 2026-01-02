@@ -43,6 +43,9 @@ test*.pdf
 debug*.pdf
 quick_test*.pdf
 *.pdf.backup
+output_*.pdf
+*_fr.pdf
+*_translated.pdf
 
 # Experiments
 experiments/results/

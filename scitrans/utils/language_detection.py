@@ -7,6 +7,7 @@ Provides automatic language detection for source documents.
 from __future__ import annotations
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -24,124 +25,128 @@ SUPPORTED_LANGUAGES = {
     "ru": "Russian",
     "ar": "Arabic",
     "nl": "Dutch",
-    "pl": "Polish",
     "sv": "Swedish",
-    "da": "Danish",
-    "fi": "Finnish",
-    "no": "Norwegian",
-    "cs": "Czech",
-    "hu": "Hungarian",
-    "ro": "Romanian",
-    "bg": "Bulgarian",
-    "hr": "Croatian",
-    "sk": "Slovak",
-    "sl": "Slovenian",
-    "el": "Greek",
+    "pl": "Polish",
     "tr": "Turkish",
-    "he": "Hebrew",
-    "th": "Thai",
     "vi": "Vietnamese",
-    "id": "Indonesian",
-    "ms": "Malay",
+    "th": "Thai",
     "hi": "Hindi",
-    "bn": "Bengali",
-    "ta": "Tamil",
-    "te": "Telugu",
-    "ur": "Urdu",
 }
 
-# Language families for better detection
-LANGUAGE_FAMILIES = {
-    "latin": ["en", "fr", "es", "it", "pt", "ro"],
-    "germanic": ["de", "nl", "sv", "da", "no"],
-    "slavic": ["ru", "pl", "cs", "sk", "bg", "hr", "sl"],
-    "asian": ["zh", "ja", "ko", "th", "vi", "hi", "bn", "ta", "te"],
-    "semitic": ["ar", "he", "ur"],
-    "other": ["el", "tr", "fi", "hu", "id", "ms"],
+# Common words for language detection (simple heuristic)
+LANGUAGE_INDICATORS = {
+    "en": {
+        "common": ["the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"],
+        "articles": ["the", "a", "an"],
+    },
+    "fr": {
+        "common": ["le", "de", "et", "à", "un", "il", "être", "et", "en", "avoir", "que", "pour"],
+        "articles": ["le", "la", "les", "un", "une", "des"],
+    },
+    "es": {
+        "common": ["el", "la", "de", "que", "y", "a", "en", "un", "ser", "se", "no", "haber"],
+        "articles": ["el", "la", "los", "las", "un", "una", "unos", "unas"],
+    },
+    "de": {
+        "common": ["der", "die", "und", "in", "den", "von", "zu", "das", "mit", "sich", "des", "auf"],
+        "articles": ["der", "die", "das", "ein", "eine"],
+    },
 }
 
 
-def detect_language(text: str, sample_size: int = 1000) -> str | None:
+def detect_language(text: str, sample_size: int = 500) -> tuple[str, float]:
     """
-    Detect language from text sample.
-
-    Uses heuristics and character analysis for detection.
-    For production, consider using langdetect or polyglot libraries.
+    Detect the language of text using simple heuristics.
 
     Args:
         text: Text to analyze
-        sample_size: Maximum characters to analyze
+        sample_size: Maximum characters to analyze (for performance)
 
     Returns:
-        Language code (e.g., "en", "fr") or None if uncertain
+        Tuple of (language_code, confidence) where confidence is 0.0-1.0
     """
-    if not text or len(text.strip()) < 10:
-        return None
+    if not text or not text.strip():
+        return "en", 0.0  # Default to English
 
-    # Sample text
+    # Take a sample for performance
     sample = text[:sample_size].lower()
 
-    # Character-based detection
-    char_counts = {}
-    for char in sample:
-        if char.isalpha():
-            char_counts[char] = char_counts.get(char, 0) + 1
+    # Extract words (simple tokenization)
+    words = re.findall(r"\b[a-zàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ]+\b", sample)
 
-    # Common patterns
-    patterns = {
-        "en": ["the", "and", "is", "are", "was", "were"],
-        "fr": ["le", "de", "et", "est", "les", "des"],
-        "es": ["el", "la", "de", "que", "y", "en"],
-        "de": ["der", "die", "das", "und", "ist", "sind"],
-        "zh": ["的", "是", "在", "有", "和", "了"],
-        "ja": ["の", "は", "に", "を", "が", "で"],
-        "ar": ["ال", "في", "من", "على", "إلى", "أن"],
-        "ru": ["и", "в", "не", "что", "на", "с"],
-    }
+    if not words:
+        return "en", 0.0
 
-    scores = {}
-    for lang_code, common_words in patterns.items():
-        score = sum(sample.count(word) for word in common_words)
+    # Count matches for each language
+    scores: dict[str, float] = {}
+
+    for lang_code, indicators in LANGUAGE_INDICATORS.items():
+        score = 0.0
+        total_words = len(words)
+
+        if total_words == 0:
+            continue
+
+        # Check common words
+        common_matches = sum(1 for word in words if word in indicators["common"])
+        article_matches = sum(1 for word in words if word in indicators["articles"])
+
+        # Weight articles more heavily (they're more distinctive)
+        score = (common_matches * 0.5 + article_matches * 2.0) / total_words
         scores[lang_code] = score
 
-    # Unicode range detection
-    unicode_ranges = {
-        "zh": (0x4E00, 0x9FFF),  # CJK Unified Ideographs
-        "ja": (0x3040, 0x309F),  # Hiragana
-        "ko": (0xAC00, 0xD7AF),  # Hangul
-        "ar": (0x0600, 0x06FF),  # Arabic
-        "he": (0x0590, 0x05FF),  # Hebrew
-        "ru": (0x0400, 0x04FF),  # Cyrillic
-        "el": (0x0370, 0x03FF),  # Greek
-        "th": (0x0E00, 0x0E7F),  # Thai
-    }
-
-    for lang_code, (start, end) in unicode_ranges.items():
-        count = sum(1 for char in sample if start <= ord(char) <= end)
-        if count > len(sample) * 0.1:  # 10% threshold
-            scores[lang_code] = scores.get(lang_code, 0) + count * 10
-
     if not scores:
-        return None
+        return "en", 0.0
 
-    # Return language with highest score
-    detected = max(scores.items(), key=lambda x: x[1])
-    if detected[1] > 0:
-        return detected[0]
+    # Find best match
+    best_lang = max(scores.items(), key=lambda x: x[1])
+    lang_code, confidence = best_lang
 
-    return None
+    # Normalize confidence (heuristic-based, so cap at 0.8)
+    confidence = min(confidence * 1.5, 0.8)
 
+    logger.debug(f"Language detection: {lang_code} (confidence: {confidence:.2f})")
 
-def get_language_name(lang_code: str) -> str:
-    """Get language name from code."""
-    return SUPPORTED_LANGUAGES.get(lang_code, lang_code.upper())
-
-
-def is_language_supported(lang_code: str) -> bool:
-    """Check if language code is supported."""
-    return lang_code in SUPPORTED_LANGUAGES
+    return lang_code, confidence
 
 
-def get_all_supported_languages() -> list[tuple[str, str]]:
-    """Get all supported languages as (name, code) tuples."""
-    return [(name, code) for code, name in sorted(SUPPORTED_LANGUAGES.items())]
+def detect_language_from_pdf(
+    text_blocks: list[str], min_confidence: float = 0.3
+) -> tuple[str, float]:
+    """
+    Detect language from multiple text blocks (e.g., from a PDF).
+
+    Args:
+        text_blocks: List of text blocks from the document
+        min_confidence: Minimum confidence to return a detection
+
+    Returns:
+        Tuple of (language_code, confidence)
+    """
+    if not text_blocks:
+        return "en", 0.0
+
+    # Combine blocks (up to reasonable limit)
+    combined_text = " ".join(text_blocks[:20])  # Use first 20 blocks
+
+    lang_code, confidence = detect_language(combined_text)
+
+    if confidence < min_confidence:
+        logger.warning(
+            f"Language detection confidence ({confidence:.2f}) below threshold ({min_confidence}). "
+            f"Defaulting to English."
+        )
+        return "en", 0.0
+
+    return lang_code, confidence
+
+
+def is_language_code_valid(code: str) -> bool:
+    """Check if a language code is supported."""
+    return code.lower() in SUPPORTED_LANGUAGES
+
+
+def get_language_name(code: str) -> str:
+    """Get the full name of a language from its code."""
+    return SUPPORTED_LANGUAGES.get(code.lower(), code.upper())
+

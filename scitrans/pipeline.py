@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -147,7 +148,8 @@ def run_pipeline(
                 else:
                     header_count += 1
                     logger.debug(f"Detected HEADER block {block.id}: '{src[:50]}...'")
-            masked, registry, counts = masker.mask(src)
+            # Pass block to masker for advanced span-level math detection
+            masked, registry, counts = masker.mask(src, block=block)
             masked_blocks.append(
                 MaskedBlock(
                     block_id=block.id, masked_text=masked, registry=registry, mask_counts=counts
@@ -282,6 +284,27 @@ def run_pipeline(
 
         candidates: list[str] = []
         res_meta: dict = {}
+
+        # Get block metadata for enhanced prompting
+        is_header_block = False
+        is_bullet_block = False
+        for page in doc.pages:
+            for block in page.blocks:
+                if block.id == mb.block_id:
+                    is_header_block = block.meta.get("is_header", False)
+                    # Check if it's a bullet point
+                    source_text_check = _block_text(block)
+                    is_bullet_block = any(source_text_check.strip().startswith(bullet) for bullet in ["•", "-", "*", "·"])
+                    break
+        
+        # Build enhanced prompt for headers/bullets
+        enhanced_prompt = build_system_prompt(
+            source=cfg.source_lang,
+            target=cfg.target_lang,
+            glossary=glossary,
+            is_header=is_header_block,
+            is_bullet=is_bullet_block,
+        )
         
         # Always translate - no cache, no memory, no context
         # Translate each block independently
@@ -289,7 +312,7 @@ def run_pipeline(
             text=mb.masked_text,
             source_lang=cfg.source_lang,
             target_lang=cfg.target_lang,
-            system_prompt=system_prompt,
+            system_prompt=enhanced_prompt,  # Use enhanced prompt
             temperature=block_temperature,
             n_candidates=block_n_candidates,
             context="",  # No context - user doesn't care about context retention
@@ -299,7 +322,7 @@ def run_pipeline(
         masked_preview = mb.masked_text[:80] + "..." if len(mb.masked_text) > 80 else mb.masked_text
         logger.info(f"Block {mb.block_id}: Sending to backend (masked, {len(mb.masked_text)} chars): {masked_preview}")
         logger.debug(f"Block {mb.block_id}: Full masked text: {mb.masked_text}")
-        
+
         try:
             res = backend.translate(req)
             candidates = res.candidates if res.candidates else [""]
@@ -320,28 +343,29 @@ def run_pipeline(
                 logger.warning(f"Block {mb.block_id}: Backend returned EMPTY translation!")
                 console.print(f"[red]  ✗ Backend returned EMPTY![/red]")
 
-            # Log which backends were used (for cascade_free)
-            if backend.name == "cascade_free" and res.meta.get("backends_used"):
-                backend_names = [
-                    b["backend"] for b in res.meta["backends_used"] if b.get("success")
-                ]
-                if backend_names:
-                    logger.info(
-                        f"Block {mb.block_id}: cascade_free used {', '.join(backend_names)}"
-                    )
-                    console.print(
-                        f"[cyan]Block {mb.block_id}: Using {', '.join(backend_names)}[/cyan]"
-                    )
-                    # Warn if only Google Translate
-                    if backend_names == ["google"]:
-                        console.print(
-                            f"[yellow]⚠ Block {mb.block_id}: Using Google Translate only - quality may be poor[/yellow]"
+                # Log which backends were used (for cascade_free)
+                if backend.name == "cascade_free" and res.meta.get("backends_used"):
+                    backend_names = [
+                        b["backend"] for b in res.meta["backends_used"] if b.get("success")
+                    ]
+                    if backend_names:
+                        logger.info(
+                            f"Block {mb.block_id}: cascade_free used {', '.join(backend_names)}"
                         )
-                else:
-                    logger.error(f"Block {mb.block_id}: cascade_free - NO backends succeeded!")
-                    console.print(
-                        f"[red]❌ Block {mb.block_id}: All backends failed![/red]"
-                    )
+                        console.print(
+                            f"[cyan]Block {mb.block_id}: Using {', '.join(backend_names)}[/cyan]"
+                        )
+                        # Warn if only Google Translate
+                        if backend_names == ["google"]:
+                            console.print(
+                                f"[yellow]⚠ Block {mb.block_id}: Using Google Translate only - quality may be poor[/yellow]"
+                            )
+                    else:
+                        logger.error(f"Block {mb.block_id}: cascade_free - NO backends succeeded!")
+                        console.print(
+                            f"[red]❌ Block {mb.block_id}: All backends failed![/red]"
+                        )
+
         except Exception as e:
             logger.error(f"Block {mb.block_id}: Backend translation failed: {e}", exc_info=True)
             candidates = [""]
@@ -359,19 +383,22 @@ def run_pipeline(
         # Rerank candidates if enabled and multiple candidates
         if cfg.enable_reranking and len(candidates) > 1:
             # Get source text for reranking (unmasked)
-            source_text = mb.masked_text
+            source_text_for_rerank = mb.masked_text
             # Find original source text from document
+            is_header_for_rerank = False
             for page in doc.pages:
                 for block in page.blocks:
                     if block.id == mb.block_id:
-                        source_text = _block_text(block)
+                        source_text_for_rerank = _block_text(block)
+                        is_header_for_rerank = block.meta.get("is_header", False)
                         break
 
             ranked = rerank_candidates(
                 candidates=candidates,
-                source_text=source_text,
+                source_text=source_text_for_rerank,
                 registry=mb.registry,
                 glossary=glossary,
+                is_header=is_header_for_rerank,  # Pass header flag for enhanced scoring
             )
             if ranked:
                 # Log which candidate was selected
@@ -395,6 +422,37 @@ def run_pipeline(
 
         # Restore placeholders
         restored, restore_errors = masker.restore(candidate, mb.registry, tolerant=True)
+
+        # Check if any placeholders remain unreplaced (should not happen)
+        remaining_placeholders = re.findall(r'(?:<<|⟦)[A-Z_]+_\d+(?:>>|⟧)', restored)
+        if remaining_placeholders:
+            # Only warn about placeholders that were actually in the registry (not backend hallucinations)
+            actual_missing = []
+            for ph_remaining in remaining_placeholders:
+                # Try both formats
+                ph_key = None
+                if ph_remaining.startswith("<<"):
+                    ph_key = ph_remaining
+                elif ph_remaining.startswith("⟦"):
+                    # Convert ⟦KIND_NUM⟧ to <<KIND_NUM>>
+                    inner = ph_remaining[1:-1]
+                    ph_key = f"<<{inner}>>"
+                
+                if ph_key and ph_key in mb.registry:
+                    # This is a real placeholder that should be restored
+                    actual_missing.append(ph_remaining)
+                    restored = restored.replace(ph_remaining, mb.registry[ph_key])
+                    logger.info(f"Block {mb.block_id}: Manually restored placeholder {ph_remaining} -> {mb.registry[ph_key][:30]}...")
+                else:
+                    # Backend hallucinated this placeholder - silently remove it (not a real error)
+                    logger.debug(f"Block {mb.block_id}: Removing hallucinated placeholder {ph_remaining} (not in registry)")
+                    restored = restored.replace(ph_remaining, "")
+            
+            # Only warn if we had actual missing placeholders from registry
+            if actual_missing:
+                logger.warning(
+                    f"Block {mb.block_id}: {len(actual_missing)} placeholders from registry not restored: {actual_missing[:3]}"
+                )
 
         # DEBUG: Log restored text
         if restored:
@@ -444,34 +502,67 @@ def run_pipeline(
             
             # Check if they're identical
             if source_normalized == restored_normalized:
-                identity_translation = True
-                logger.error(
-                    f"Block {mb.block_id}: IDENTITY TRANSLATION DETECTED - Backend returned source text unchanged!"
+                # SMART CHECK: Some words are identical in both languages (e.g., "Introduction", "Section", numbers)
+                # If the text is short and contains only common identical words, accept it as valid
+                identical_words_en_fr = {
+                    "introduction", "section", "chapter", "part", "abstract", "conclusion",
+                    "methodology", "results", "discussion", "references", "appendix",
+                    "figure", "table", "equation", "algorithm", "theorem", "lemma",
+                    "proof", "definition", "example", "note", "remark", "corollary",
+                    "proposition", "hypothesis", "experiment", "analysis", "evaluation"
+                }
+                
+                # Extract words (remove numbers, punctuation, placeholders)
+                source_words = set(re.findall(r'\b[a-z]+\b', source_normalized))
+                restored_words = set(re.findall(r'\b[a-z]+\b', restored_normalized))
+                
+                # Check if all words are identical in both languages OR the text is very short (likely a header)
+                all_words_identical = source_words == restored_words and all(
+                    word in identical_words_en_fr for word in source_words
                 )
-                logger.error(
-                    f"Block {mb.block_id}: Source: '{source_text_for_check[:80]}...'"
-                )
-                logger.error(
-                    f"Block {mb.block_id}: Restored: '{restored[:80]}...'"
-                )
+                is_short_header = len(source_normalized) < 50 and len(source_words) <= 5
+                
+                if all_words_identical or (is_short_header and source_words == restored_words):
+                    # Valid - words are the same in both languages (e.g., "1. Introduction" -> "1. Introduction")
+                    logger.info(
+                        f"Block {mb.block_id}: Text identical but contains words same in both languages - ACCEPTING as valid"
+                    )
+                    identity_translation = False  # Don't flag as error
+                else:
+                    identity_translation = True
+                    logger.error(
+                        f"Block {mb.block_id}: IDENTITY TRANSLATION DETECTED - Backend returned source text unchanged!"
+                    )
+                    logger.error(
+                        f"Block {mb.block_id}: Source: '{source_text_for_check[:80]}...'"
+                    )
+                    logger.error(
+                        f"Block {mb.block_id}: Restored: '{restored[:80]}...'"
+                    )
                 console.print(
-                    f"[red]⚠⚠⚠ IDENTITY TRANSLATION for block {mb.block_id} - Source and translation are IDENTICAL![/red]"
+                        f"[red]⚠⚠⚠ IDENTITY TRANSLATION for block {mb.block_id} - Source and translation are IDENTICAL![/red]"
                 )
                 restore_errors.append("identity_translation")
             elif len(source_normalized) > 10 and len(restored_normalized) > 10:
-                # Check similarity - if more than 90% of characters match, it's likely an identity translation
+                # Check similarity - but be more lenient for short text or headers
+                # Short headers/titles often have high similarity even when translated correctly
+                is_short_text = len(source_normalized) < 30
+                is_header = block.meta.get("is_header", False) if hasattr(block, 'meta') else False
+                
                 try:
                     from rapidfuzz import fuzz
                     similarity = fuzz.ratio(source_normalized, restored_normalized)
-                    if similarity > 90:  # More than 90% similar = likely identity translation
+                    # Only flag as identity if very high similarity AND not a short header
+                    # Headers like "Introduction" -> "Introduction" are valid (same word in both languages)
+                    if similarity > 95 and not (is_short_text or is_header):  # Stricter threshold, skip short/headers
                         identity_translation = True
-                        logger.error(
-                            f"Block {mb.block_id}: HIGH SIMILARITY ({similarity:.1f}%) - Likely identity translation!"
-                        )
-                        console.print(
-                            f"[red]⚠ Block {mb.block_id}: {similarity:.1f}% similarity - likely not translated![/red]"
+                        logger.warning(
+                            f"Block {mb.block_id}: HIGH SIMILARITY ({similarity:.1f}%) - Possible identity translation"
                         )
                         restore_errors.append("identity_translation_high_similarity")
+                    elif similarity > 90 and not (is_short_text or is_header):
+                        # Log but don't fail - might be legitimate
+                        logger.debug(f"Block {mb.block_id}: Moderate similarity ({similarity:.1f}%) - monitoring")
                 except ImportError:
                     # rapidfuzz not available, skip similarity check
                     pass
@@ -506,16 +597,37 @@ def run_pipeline(
         # SPECIAL: Headers/titles get EXTRA priority - they must be translated
         
         should_retry = False
-        if identity_translation or wrong_translation:
-            # FORCE retry for identity/wrong translations - this is MANDATORY
-            error_type = "wrong translation (generic response)" if wrong_translation else "identity translation"
-            logger.warning(f"Block {mb.block_id}: {error_type} detected - FORCING retry to get actual translation")
-            console.print(f"[red]⚠️ Block {mb.block_id}: {error_type} - FORCING retry with stronger prompt[/red]")
+        if wrong_translation:
+            # FORCE retry for wrong translations (generic responses) - this is MANDATORY
+            logger.warning(f"Block {mb.block_id}: Wrong translation (generic response) detected - retrying")
+            console.print(f"[yellow]⚠️ Block {mb.block_id}: Generic response detected - retrying[/yellow]")
             should_retry = True
-            # Headers get extra emphasis
             if is_header_block:
-                logger.error(f"Block {mb.block_id}: HEADER/TITLE failed - CRITICAL - must retry!")
-                console.print(f"[red]🚨 CRITICAL: Header/title block failed - must be translated![/red]")
+                logger.warning(f"Block {mb.block_id}: Header/title has generic response - retrying")
+        elif identity_translation:
+            # Only retry identity translations if they're NOT valid identical words
+            # Check if it's a valid case (short header with identical words in both languages)
+            source_words = set(re.findall(r'\b[a-z]+\b', source_normalized))
+            restored_words = set(re.findall(r'\b[a-z]+\b', restored_normalized))
+            identical_words_en_fr = {
+                "introduction", "section", "chapter", "part", "abstract", "conclusion",
+                "methodology", "results", "discussion", "references", "appendix"
+            }
+            all_words_identical = source_words == restored_words and all(
+                word in identical_words_en_fr for word in source_words
+            )
+            
+            if not all_words_identical:
+                # Real identity translation - retry
+                logger.warning(f"Block {mb.block_id}: Identity translation detected - retrying")
+                console.print(f"[yellow]⚠️ Block {mb.block_id}: Identity translation - retrying[/yellow]")
+                should_retry = True
+                if is_header_block:
+                    logger.warning(f"Block {mb.block_id}: Header/title is identity - retrying")
+            else:
+                # Valid identical words - don't retry, just log
+                logger.info(f"Block {mb.block_id}: Text identical but contains words same in both languages - OK")
+                identity_translation = False  # Clear the flag since it's valid
         elif cfg.retry_failed and not cached_result and candidate.strip() != "":
             # Also retry for placeholder issues if retry is enabled
             should_retry = not placeholders_ok
@@ -678,7 +790,7 @@ def run_pipeline(
                         console.print(f"[red]✗ Block {mb.block_id}: Retry failed - still identity translation[/red]")
                 except Exception as e:
                     logger.debug(f"Retry validation failed for block {mb.block_id}: {e}")
-                    pass  # Keep original failed result
+                pass  # Keep original failed result
 
         translated_blocks.append(
             TranslatedBlock(
@@ -907,7 +1019,7 @@ def run_pipeline(
                 console.print(f"[green]✓ All {len(header_block_ids)} headers/titles translated[/green]")
     
     # Validate and FIX numbering preservation
-    import re
+    # Note: 're' is already imported at module level (line 5)
     numbering_issues = []
     numbering_fixes = {}
     
@@ -929,13 +1041,14 @@ def run_pipeline(
         if not translated_text:
             continue
         
-        # Check for section numbers (e.g., "1. ", "2)", "Section 3:")
-        section_number_pattern = r'^(\d+[\.\)]\s+|Section\s+\d+[:]?\s*|Chapter\s+\d+[:]?\s*)'
-        source_has_numbering = bool(re.match(section_number_pattern, source_text, re.IGNORECASE))
+        # Enhanced numbering detection using NumberingDetector
+        from scitrans.utils.numbering_detector import NumberingDetector
+        source_numbering = NumberingDetector.detect_numbering(source_text)
         
-        if source_has_numbering:
+        if source_numbering:
             # Extract the numbering prefix from source
-            source_match = re.match(r'^((?:\d+[\.\)]|Section\s+\d+|Chapter\s+\d+)[:\s]*)', source_text, re.IGNORECASE)
+            numbering_prefix, numbering_type, _ = source_numbering
+            source_match = re.match(r'^((?:\d+[\.\)]|Section\s+\d+|Chapter\s+\d+|[IVXLCDM]+[\.\)]|[a-zA-Z][\.\)]|\d+\.\d+)[:\s]*)', source_text, re.IGNORECASE)
             if source_match:
                 source_numbering = source_match.group(1)  # e.g., "1. ", "Section 2: "
                 source_num_match = re.search(r'(\d+)', source_numbering)
@@ -975,10 +1088,19 @@ def run_pipeline(
         console.print(f"[yellow]🔧 Fixing {len(numbering_fixes)} blocks with lost section numbers...[/yellow]")
         for block_id, fixed_text in numbering_fixes.items():
             translations[block_id] = fixed_text
-            # Update the translated block too
-            for tb in translated_blocks:
+            # Update the translated block too (create new instance since TranslatedBlock is frozen)
+            for idx, tb in enumerate(translated_blocks):
                 if tb.block_id == block_id:
-                    tb.translated_text = fixed_text
+                    # Create a new TranslatedBlock with updated text (can't modify frozen instance)
+                    updated_tb = TranslatedBlock(
+                        block_id=tb.block_id,
+                        source_text=tb.source_text,
+                        translated_text=fixed_text,
+                        ok=tb.ok,
+                        errors=tb.errors,
+                        meta=tb.meta,
+                    )
+                    translated_blocks[idx] = updated_tb
                     break
     
     if numbering_issues:
@@ -990,7 +1112,12 @@ def run_pipeline(
     else:
         logger.info("✅ Section numbering appears preserved in translations")
         if numbering_fixes:
-            console.print(f"[green]✓ Fixed {len(numbering_fixes)} blocks with restored section numbers[/green]")(f"❌ {len(missing_masked)} MASKED blocks have NO translation stored!")
+            console.print(f"[green]✓ Fixed {len(numbering_fixes)} blocks with restored section numbers[/green]")
+    
+    # Check for missing translations
+    missing_masked = [mb.block_id for mb in masked_blocks if mb.block_id not in translations]
+    if missing_masked:
+        logger.error(f"❌ {len(missing_masked)} MASKED blocks have NO translation stored!")
         console.print(f"[red]❌ CRITICAL: {len(missing_masked)} masked blocks missing from translations dict![/red]")
 
     # 4) Render - select renderer based on mode
@@ -1038,7 +1165,6 @@ def run_pipeline(
                 output_pdf=output_pdf,
                 cfg=cfg.render,
                 assets_dir=cfg.assets_dir,
-                translate_tables=cfg.translate_tables,
             )
         else:
             raise ValueError(

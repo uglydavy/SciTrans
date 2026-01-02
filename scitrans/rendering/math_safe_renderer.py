@@ -26,12 +26,15 @@ def _infer_alignment(page_width: float, x0: float, x1: float, threshold: float) 
     """Infer alignment from block margins.
 
     Returns fitz.TEXT_ALIGN_* constant.
+    Defaults to LEFT alignment for better readability.
     """
     left = x0
     right = page_width - x1
-    if abs(left - right) <= threshold:
+    # Only center if margins are very close (likely centered text)
+    # Otherwise default to left alignment
+    if abs(left - right) <= threshold and left < 50:  # Only if close to center AND near left margin
         return fitz.TEXT_ALIGN_CENTER
-    # Future: right-align heuristics (numbers)
+    # Default to left alignment for paragraphs and most content
     return fitz.TEXT_ALIGN_LEFT
 
 
@@ -45,16 +48,27 @@ def _try_insert_textbox(
     fontsize: float,
     align: int,
     line_height: float,
+    color: tuple[float, float, float] | None = None,
 ) -> float:
+    """Insert text into a textbox with optional color.
+    
+    Args:
+        color: Optional RGB tuple (0-1 range) for text color
+    """
+    kwargs = {
+        "fontname": fontname,
+        "fontfile": fontfile,
+        "fontsize": fontsize,
+        "align": align,
+        "lineheight": line_height,
+    }
+    if color:
+        kwargs["color"] = color
+    
     return page.insert_textbox(
         rect,
         text,
-        fontname=fontname,
-        fontfile=fontfile,
-        fontsize=fontsize,
-        align=align,
-        lineheight=line_height,
-        # Do not specify color unless you want to override; default uses black.
+        **kwargs
     )
 
 

@@ -105,6 +105,7 @@ def rerank_candidates(
     *,
     weights: dict[str, float] | None = None,
     backend_quality_bonus: dict[str, float] | None = None,
+    is_header: bool = False,
 ) -> list[tuple[str, RerankScore]]:
     """Rerank translation candidates by quality scores.
 
@@ -152,6 +153,24 @@ def rerank_candidates(
             + num_score * w["numeric_stability"]
             + fmt_score * w["format_stability"]
         )
+        
+        # Enhanced scoring: Add identity translation penalty
+        # Check if candidate is too similar to source (likely identity translation)
+        identity_penalty = 0.0
+        if source_text.strip() and candidate.strip():
+            source_normalized = " ".join(source_text.strip().split()).lower()
+            candidate_normalized = " ".join(candidate.strip().split()).lower()
+            if source_normalized == candidate_normalized:
+                # Exact match = identity translation (bad for headers/bullets)
+                identity_penalty = -5.0 if is_header else -3.0
+            else:
+                # Check similarity using simple character overlap
+                source_chars = set(source_normalized)
+                candidate_chars = set(candidate_normalized)
+                if source_chars and candidate_chars:
+                    overlap_ratio = len(source_chars & candidate_chars) / len(source_chars | candidate_chars)
+                    if overlap_ratio > 0.9:  # More than 90% character overlap
+                        identity_penalty = -2.0 if is_header else -1.0
 
         # Apply quality bonus based on candidate position (earlier = higher quality backend)
         # For cascade_free: first candidate is DeepSeek, last is Google
@@ -161,7 +180,7 @@ def rerank_candidates(
             position_bonus = (len(candidates) - idx) * 0.5
             quality_adjustment = position_bonus
 
-        total = base_total + quality_adjustment
+        total = base_total + quality_adjustment + identity_penalty
 
         score = RerankScore(
             placeholder_preservation=ph_score,

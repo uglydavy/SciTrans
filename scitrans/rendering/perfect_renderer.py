@@ -32,6 +32,7 @@ import re
 import fitz  # PyMuPDF
 
 from scitrans.core.models import Block, Document
+from scitrans.parsing.math_detection import is_equation_span
 from scitrans.rendering.font_manager import FontManager
 from scitrans.rendering.math_safe_renderer import (
     RenderConfig,
@@ -39,6 +40,8 @@ from scitrans.rendering.math_safe_renderer import (
     _infer_alignment,
     _try_insert_textbox,
 )
+from scitrans.rendering.span_level_renderer import preserve_color_from_spans
+from scitrans.utils.numbering_detector import NumberingDetector
 
 logger = logging.getLogger(__name__)
 
@@ -243,9 +246,9 @@ def _get_block_base_style(block: Block, min_font_size: float = 12.0) -> tuple[st
         else:
             font_name = font_info[0][0]
         
-        # Average font size
+        # Average font size - ensure minimum 12pt for readability
         avg_size = sum(f[1] for f in font_info) / len(font_info)
-        font_size = max(avg_size, min_font_size)
+        font_size = max(avg_size, 12.0)  # Enforce 12pt minimum for all text
         
         # Most common flags (majority vote)
         flag_counts: dict[int, int] = {}
@@ -272,6 +275,11 @@ def _should_replace_block(
 
     # Preserve tables unless explicitly enabled
     if block.meta.get("region") == "table" and not translate_tables:
+        # #region agent log
+        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"J","location":"perfect_renderer.py:278","message":"Table block skipped","data":{"block_id":block.id}})+'\n')
+        # #endregion
         return False, None, source_text
 
     target_text = translations.get(block.id)
@@ -279,13 +287,30 @@ def _should_replace_block(
     # CRITICAL: Headers/titles should ALWAYS be rendered, even if translation is empty
     # Use source text as fallback for headers to ensure they appear
     is_header = block.meta.get("is_header", False)
+    block_type = block.meta.get("block_type", "normal")
+    
+    # #region agent log
+    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"K","location":"perfect_renderer.py:287","message":"_should_replace_block entry","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"has_target_text":bool(target_text),"source_preview":source_text[:50]}})+'\n')
+    # #endregion
     
     # Missing / empty translation → keep original (coverage safety)
     if not target_text or not target_text.strip():
         # For headers, use source text as fallback (better than nothing)
         if is_header:
             logger.warning(f"Block {block.id}: Header translation is empty, using source as fallback")
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"L","location":"perfect_renderer.py:295","message":"Header with no translation - using source fallback","data":{"block_id":block.id,"is_header":is_header}})+'\n')
+            # #endregion
             return True, source_text, source_text  # Render source text for headers
+        # #region agent log
+        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"L","location":"perfect_renderer.py:300","message":"Non-header with no translation - returning False","data":{"block_id":block.id,"is_header":is_header}})+'\n')
+        # #endregion
         return False, None, source_text
 
     # Identity translation → STILL REPLACE (user wants translation, not source)
@@ -329,19 +354,49 @@ def render_translated_pdf_perfect(
     for page_idx, page_model in enumerate(doc.pages):
         page = pdf[page_idx]
 
+        # #region agent log
+        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"perfect_renderer.py:332","message":"Rendering page","data":{"page_idx":page_idx,"total_blocks":len(page_model.blocks)}})+'\n')
+        # #endregion
+
         # 1) Redact only blocks we will replace
         # CRITICAL: Never touch image blocks - they are preserved automatically
         redacted_any = False
+        redacted_block_ids = []
         for block in page_model.blocks:
             if block.type != "text":
                 # Images and other non-text blocks are automatically preserved
                 # PyMuPDF redactions only affect text, so images remain untouched
                 continue
 
+            source_text = _block_text(block)
+            is_header = block.meta.get("is_header", False)
+            block_type = block.meta.get("block_type", "normal")
+            has_translation = block.id in translations and translations.get(block.id, "").strip()
+            
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"perfect_renderer.py:347","message":"Checking block for redaction","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"has_translation":has_translation,"source_preview":source_text[:50]}})+'\n')
+            # #endregion
+
             replace, target_text, _source_text = _should_replace_block(
                 block, translations, translate_tables=translate_tables
             )
+            
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"perfect_renderer.py:356","message":"_should_replace_block result","data":{"block_id":block.id,"replace":replace,"has_target_text":bool(target_text),"target_preview":target_text[:50] if target_text else None}})+'\n')
+            # #endregion
+
             if not replace or not target_text:
+                # #region agent log
+                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"C","location":"perfect_renderer.py:361","message":"Block NOT redacted","data":{"block_id":block.id,"is_header":is_header,"reason":"replace=False or no target_text"}})+'\n')
+                # #endregion
                 continue
 
             rect = fitz.Rect(
@@ -352,17 +407,38 @@ def render_translated_pdf_perfect(
             )
             page.add_redact_annot(rect, fill=(1, 1, 1))
             redacted_any = True
+            redacted_block_ids.append(block.id)
+            
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"perfect_renderer.py:375","message":"Block REDACTED","data":{"block_id":block.id,"is_header":is_header}})+'\n')
+            # #endregion
 
         if redacted_any:
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"perfect_renderer.py:380","message":"Redactions applied","data":{"page_idx":page_idx,"redacted_count":len(redacted_block_ids),"redacted_ids":redacted_block_ids}})+'\n')
+            # #endregion
 
         # 2) Insert translations
+        rendered_block_ids = []
         for block in page_model.blocks:
             if block.type != "text":
                 continue
 
             source_text = _block_text(block)
             stored_translation = translations.get(block.id, "")
+            is_header = block.meta.get("is_header", False)
+            block_type = block.meta.get("block_type", "normal")
+            
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"E","location":"perfect_renderer.py:395","message":"Processing block for rendering","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"has_translation":bool(stored_translation),"source_preview":source_text[:50]}})+'\n')
+            # #endregion
             
             # DEBUG: Log what we have for this block (first 2 pages)
             if page_idx < 2:
@@ -373,16 +449,37 @@ def render_translated_pdf_perfect(
             replace, target_text, source_text_check = _should_replace_block(
                 block, translations, translate_tables=translate_tables
             )
+            
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"F","location":"perfect_renderer.py:408","message":"_should_replace_block result (render phase)","data":{"block_id":block.id,"replace":replace,"has_target_text":bool(target_text),"is_header":is_header}})+'\n')
+            # #endregion
+
             if not replace or not target_text:
-                # DEBUG: Log why block wasn't replaced
-                if block.id not in translations:
-                    logger.warning(f"Page {page_idx+1}, Block {block.id}: NO TRANSLATION in dictionary! Source: '{source_text[:50]}...'")
-                elif not translations.get(block.id, "").strip():
-                    logger.warning(f"Page {page_idx+1}, Block {block.id}: Translation is EMPTY! Source: '{source_text[:50]}...'")
+                # CRITICAL: Always render blocks - if no translation, use source text
+                # This ensures no blocks are omitted from the final PDF
+                if block.id not in translations or not translations.get(block.id, "").strip():
+                    # Use source text as fallback to ensure block is rendered
+                    logger.debug(f"Page {page_idx+1}, Block {block.id}: Using source text as fallback (no translation)")
+                    target_text = source_text
+                    # #region agent log
+                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"G","location":"perfect_renderer.py:417","message":"Using source text fallback","data":{"block_id":block.id,"is_header":is_header,"reason":"no translation in dict"}})+'\n')
+                    # #endregion
                 else:
                     stored_trans = translations.get(block.id, "")
-                    logger.debug(f"Page {page_idx+1}, Block {block.id}: Not replacing (identity or other reason). Stored: '{stored_trans[:50]}...'")
-                continue
+                    logger.debug(f"Page {page_idx+1}, Block {block.id}: Using stored translation. Stored: '{stored_trans[:50]}...'")
+                    target_text = stored_trans
+                    # #region agent log
+                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"G","location":"perfect_renderer.py:424","message":"Using stored translation","data":{"block_id":block.id,"is_header":is_header,"stored_preview":stored_trans[:50]}})+'\n')
+                    # #endregion
+                
+                # Continue to render with source or stored translation
+                # Don't skip the block - ensure it's rendered
             
             # DEBUG: Log what we're inserting (first 2 pages)
             if page_idx < 2:
@@ -391,10 +488,22 @@ def render_translated_pdf_perfect(
 
             # Preserve bullets based on the source block content
             target_text = preserve_bullet_in_translation(source_text, target_text)
+            
+            # Enhanced numbering preservation (Roman, nested, letters)
+            from scitrans.utils.numbering_detector import NumberingDetector
+            target_text = NumberingDetector.preserve_numbering(source_text, target_text)
+            
+            # Preserve line breaks and paragraph formatting
+            from scitrans.utils.line_break_preserver import preserve_line_breaks, preserve_paragraph_spacing
+            target_text = preserve_line_breaks(source_text, target_text)
+            target_text = preserve_paragraph_spacing(source_text, target_text)
 
             base_font, base_size, flags = _get_block_base_style(block)
             font_key = _resolve_font_key(base_font, flags)
             font = font_mgr.pick(font_key)
+            
+            # Preserve text color if available
+            text_color = preserve_color_from_spans(block)
 
             rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
             align = _infer_alignment(
@@ -412,19 +521,46 @@ def render_translated_pdf_perfect(
                 align=align,
             )
 
-            _try_insert_textbox(
-                page,
-                rect,
-                target_text,
-                fontname=font.name,
-                fontfile=font.file,
-                fontsize=fitted_size,
-                align=align,
-                line_height=cfg.line_height,
-            )
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"H","location":"perfect_renderer.py:530","message":"About to render block","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"target_preview":target_text[:50],"font_size":fitted_size}})+'\n')
+            # #endregion
+
+            try:
+                _try_insert_textbox(
+                    page,
+                    rect,
+                    target_text,
+                    fontname=font.name,
+                    fontfile=font.file,
+                    fontsize=fitted_size,
+                    align=align,
+                    line_height=cfg.line_height,
+                    color=text_color,  # Preserve color if available
+                )
+                rendered_block_ids.append(block.id)
+                # #region agent log
+                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"H","location":"perfect_renderer.py:548","message":"Block RENDERED successfully","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type}})+'\n')
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"H","location":"perfect_renderer.py:553","message":"Block RENDER FAILED","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"error":str(e)}})+'\n')
+                # #endregion
+                logger.error(f"Failed to render block {block.id}: {e}", exc_info=True)
 
             if cfg.debug_draw_boxes:
                 page.draw_rect(rect, color=(0, 1, 0), width=0.5)  # green
+        
+        # #region agent log
+        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"I","location":"perfect_renderer.py:563","message":"Page rendering complete","data":{"page_idx":page_idx,"total_blocks":len(page_model.blocks),"rendered_count":len(rendered_block_ids),"rendered_ids":rendered_block_ids}})+'\n')
+        # #endregion
 
     pdf.save(output_pdf)
     pdf.close()

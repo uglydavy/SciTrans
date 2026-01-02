@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Optional
+
+from scitrans.core.models import Block
 
 # ASCII placeholders are more stable across models/fonts than Unicode ⟦⟧
 DEFAULT_PLACEHOLDER_FMT = "<<{kind}_{num:04d}>>"
@@ -21,11 +24,14 @@ def default_rules() -> list[MaskRule]:
             MaskRule("CODEBLOCK", re.compile(r"```.*?```", re.DOTALL), priority=100),
             MaskRule("INLINECODE", re.compile(r"`[^`\n]+`"), priority=90),
             # LaTeX-ish math regions in *text* PDFs
+            # Display math: $$...$$ or \[...\]
             MaskRule(
                 "MATH_DISPLAY", re.compile(r"\$\$.*?\$\$|\\\[.*?\\\]", re.DOTALL), priority=80
             ),
+            # Inline math: $...$ (flexible - allows single chars like $x$)
+            # Also matches \(...\) for LaTeX inline math
             MaskRule(
-                "MATH_INLINE", re.compile(r"\$(?!\$).*?\$|\\\(.*?\\\)", re.DOTALL), priority=70
+                "MATH_INLINE", re.compile(r"\$(?!\$)([^$\n]*?)\$|\\\(.*?\\\)", re.DOTALL), priority=70
             ),
             # Bullet points - preserve exactly (CRITICAL for perfect rendering)
             MaskRule("BULLET", re.compile(r"^([•\-\*·▪▫])\s+", re.MULTILINE), priority=65),
@@ -54,16 +60,46 @@ class MaskingEngine:
     """
 
     def __init__(
-        self, rules: list[MaskRule] | None = None, placeholder_fmt: str = DEFAULT_PLACEHOLDER_FMT
+        self, 
+        rules: list[MaskRule] | None = None, 
+        placeholder_fmt: str = DEFAULT_PLACEHOLDER_FMT,
+        use_advanced_math: bool = True,
     ):
         self.rules = rules or default_rules()
         self.placeholder_fmt = placeholder_fmt
+        self.use_advanced_math = use_advanced_math
+        if use_advanced_math:
+            try:
+                from scitrans.masking.advanced_math_detector import AdvancedMathDetector
+                self.advanced_math = AdvancedMathDetector()
+            except ImportError:
+                self.advanced_math = None
+                self.use_advanced_math = False
+        else:
+            self.advanced_math = None
 
-    def mask(self, text: str) -> tuple[str, dict[str, str], dict[str, int]]:
+    def mask(
+        self, 
+        text: str, 
+        block: Optional[Block] = None
+    ) -> tuple[str, dict[str, str], dict[str, int]]:
         registry: dict[str, str] = {}
         counts: dict[str, int] = {}
 
         masked = text
+        
+        # Use advanced math detection if available and block is provided
+        if self.use_advanced_math and self.advanced_math and block:
+            # First, mask math using span-level analysis (catches math without delimiters)
+            math_masked, math_registry = self.advanced_math.mask_math_in_text(
+                masked, block, placeholder_fmt="<<MATH_{num:04d}>>"
+            )
+            masked = math_masked
+            registry.update(math_registry)
+            if math_registry:
+                counts["MATH_ADVANCED"] = len(math_registry)
+
+        # Apply standard regex-based rules (for code, URLs, etc.)
         for rule in self.rules:
             n = 0
 
@@ -86,32 +122,54 @@ class MaskingEngine:
         errors: list[str] = []
         out = translated
 
-        # Exact restoration
+        # Exact restoration - try both <<>> and ⟦⟧ formats
         for ph, original in registry.items():
             if ph in out:
                 out = out.replace(ph, original)
             else:
-                errors.append(f"missing_placeholder:{ph}")
+                # Try alternative format: if we have <<MATH_INLINE_0001>>, also try ⟦MATH_INLINE_0001⟧
+                # Extract the kind and number from placeholder
+                ph_alt = None
+                if ph.startswith("<<") and ph.endswith(">>"):
+                    # Convert <<KIND_NUM>> to ⟦KIND_NUM⟧
+                    inner = ph[2:-2]  # Remove << and >>
+                    ph_alt = f"⟦{inner}⟧"
+                elif ph.startswith("⟦") and ph.endswith("⟧"):
+                    # Convert ⟦KIND_NUM⟧ to <<KIND_NUM>>
+                    inner = ph[1:-1]  # Remove ⟦ and ⟧
+                    ph_alt = f"<<{inner}>>"
+                
+                if ph_alt and ph_alt in out:
+                    out = out.replace(ph_alt, original)
+                else:
+                    errors.append(f"missing_placeholder:{ph}")
 
         if errors and tolerant:
             # Attempt very small repairs: sometimes models add spaces inside brackets.
-            # Example: "<< MATH_INLINE_0001 >>"
+            # Example: "<< MATH_INLINE_0001 >>" or "⟦ MATH_INLINE_0001 ⟧"
             repaired = out
             for ph, original in registry.items():
                 if ph in repaired:
                     continue
 
-                ph_loose = re.escape(ph)
-                ph_loose = ph_loose.replace("_", r"\s*_\s*")
-                # allow whitespace inside the brackets
-                ph_loose = ph_loose.replace("<<", r"<<\s*").replace(">>", r"\s*>>")
-                candidate = re.compile(ph_loose)
-                m = candidate.search(repaired)
-                if m:
-                    repaired = repaired[: m.start()] + original + repaired[m.end() :]
-                    err = f"missing_placeholder:{ph}"
-                    if err in errors:
-                        errors.remove(err)
+                # Try both formats with loose matching
+                for fmt in [ph, ph.replace("<<", "⟦").replace(">>", "⟧")]:
+                    if fmt in repaired:
+                        continue
+                    
+                    ph_loose = re.escape(fmt)
+                    ph_loose = ph_loose.replace("_", r"\s*_\s*")
+                    # allow whitespace inside the brackets (both formats)
+                    ph_loose = ph_loose.replace("<<", r"<<\s*").replace(">>", r"\s*>>")
+                    ph_loose = ph_loose.replace("⟦", r"⟦\s*").replace("⟧", r"\s*⟧")
+                    candidate = re.compile(ph_loose)
+                    m = candidate.search(repaired)
+                    if m:
+                        repaired = repaired[: m.start()] + original + repaired[m.end() :]
+                        err = f"missing_placeholder:{ph}"
+                        if err in errors:
+                            errors.remove(err)
+                        break
 
             out = repaired
 

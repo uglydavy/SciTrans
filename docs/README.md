@@ -13,15 +13,6 @@ System architecture and design principles.
 - Architectural invariants
 - Module dependencies
 
-#### `phase_plan.md`
-Development phases and completion criteria.
-- Phase 0: Critical bugs
-- Phase 1: Layout intelligence
-- Phase 2: Math-safe segmentation
-- Phase 3: Table detection
-- Phase 4: Table handling
-- Phase 5: Benchmarking
-
 ---
 
 ### Feature Documentation
@@ -87,42 +78,12 @@ Configuration guide and security best practices.
 - Feature toggles
 - Security best practices
 
-#### `BENCHMARKS.md`
-Benchmarking guide.
-- Running benchmarks
-- Interpreting results
-- Visualization
-- Adding custom PDFs
-
 #### `TESTING.md`
 Testing guide for developers.
 - Running tests
 - Writing new tests
 - Coverage goals
 - CI/CD integration
-
-#### `PRODUCTION_READINESS_CHECKLIST.md`
-Pre-deployment verification checklist.
-- Repository hygiene
-- Build verification
-- Security audit
-- Integration tests
-- Documentation completeness
-
----
-
-### Development Documentation
-
-#### `PRODUCTION_ROADMAP.md`
-Detailed roadmap for production deployment.
-- Current capabilities
-- Known limitations
-- Future improvements
-- Timeline estimates
-
-#### `dev_notes/`
-Development notes and baselines.
-- `production_readiness_baseline.md` — Pre-hardening status
 
 ---
 
@@ -137,13 +98,13 @@ Development notes and baselines.
 - [`FEATURES.md`](FEATURES.md) — What can SciTrans do?
 - [`BACKENDS.md`](BACKENDS.md) — Which backend should I use?
 - [`CONFIGURATION.md`](CONFIGURATION.md) — How do I configure it?
-- [`BENCHMARKS.md`](BENCHMARKS.md) — How good is the quality?
+- [`GUI_USER_GUIDE.md`](GUI_USER_GUIDE.md) — GUI usage guide
 
 **For developers:**
 - [`architecture.md`](architecture.md) — System design
 - [`TESTING.md`](TESTING.md) — Running and writing tests
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — Contribution guide
-- [`phase_plan.md`](phase_plan.md) — Development phases
+- [`FILES_RESPONSIBLE.md`](FILES_RESPONSIBLE.md) — File responsibilities
 
 **For researchers:**
 - [`ADAPTIVE_SCORING.md`](ADAPTIVE_SCORING.md) — Research contribution

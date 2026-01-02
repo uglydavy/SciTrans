@@ -32,13 +32,17 @@ def _deterministic_block_id(page_index: int, bbox: BBox, text_content: str) -> s
     return f"b_{page_index}_{block_hash}"
 
 
-def _detect_and_tag_headers_titles(blocks: list[Block]) -> None:
+def _detect_and_tag_headers_titles(blocks: list[Block], page_index_map: dict[str, int] | None = None) -> None:
     """Detect headers and titles based on font size, styling, and text patterns.
     
     Tags blocks with:
     - "block_type": "title" (very large font, typically at top)
     - "block_type": "header" (large font, bold, section headers)
     - "block_type": "subheader" (medium font, bold)
+    
+    Args:
+        blocks: List of blocks to tag
+        page_index_map: Optional dict mapping block.id to page index (0-based)
     """
     import re
     
@@ -84,8 +88,16 @@ def _detect_and_tag_headers_titles(blocks: list[Block]) -> None:
         is_roman_numeral = bool(re.match(r'^[IVX]+\.\s+', block_text, re.IGNORECASE))
         is_short_uppercase = len(block_text) < 50 and block_text.isupper() and len(block_text.split()) <= 5
         
-        # Classify block type
-        if max_font_size >= 18 or (max_font_size >= 16 and is_bold and len(block_text) < 100):
+        # Classify block type - IMPROVED: More lenient title detection
+        # Title: Very large font OR first page + large font OR short text + large font
+        is_first_page = False  # Will be set if block is on first page
+        is_title_candidate = (
+            max_font_size >= 16 or  # Lowered from 18
+            (max_font_size >= 14 and is_bold and len(block_text) < 150) or  # More lenient
+            (max_font_size >= 12 and is_bold and len(block_text) < 50 and block_text[0].isupper())  # Short bold uppercase
+        )
+        
+        if is_title_candidate:
             # Very large font = title
             block.meta["block_type"] = "title"
             block.meta["is_header"] = True
@@ -236,7 +248,11 @@ def parse_pdf(path: str, use_layout_intelligence: bool = True) -> Document:
                 b.meta["region"] = "caption"
             
             # Detect and tag headers/titles based on styling and patterns
-            _detect_and_tag_headers_titles(blocks)
+            # Build page index map for title detection (titles often on first page)
+            page_index_map = {}
+            for idx, b in enumerate(blocks):
+                page_index_map[b.id] = page_index
+            _detect_and_tag_headers_titles(blocks, page_index_map=page_index_map)
         else:
             # Simple sorting (PHASE 0)
             blocks = _sort_blocks_by_reading_order(blocks)

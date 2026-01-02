@@ -56,7 +56,7 @@ def _get_backend(name: str, model: str):
     if name == "ollama":
         return OllamaBackend(model=model)
     raise typer.BadParameter(
-        f"Unknown backend: {name}. Available: cascade_free (default), deepseek, anthropic, openai, google, huggingface, ollama, dummy"
+        f"Unknown backend: {name}. Available: cascade_free (default, uses ollama & google together), deepseek, anthropic, openai, google, huggingface, ollama, dummy"
     )
 
 

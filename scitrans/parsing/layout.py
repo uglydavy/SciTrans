@@ -88,12 +88,14 @@ def detect_columns(blocks: list[Block], page_width: float, min_gap: float = 30.0
 
 
 def is_table_candidate(block: Block) -> bool:
-    """Heuristic to flag table-like blocks.
-
-    Signals:
-    - Presence of vertical bars or tab-like spacing
-    - High numeric density
-    - Repeated spacing patterns (simple heuristic)
+    """Enhanced table detection with better heuristics.
+    
+    Checks:
+    1. Grid-like structure (multiple columns)
+    2. Repeated separators (|, tabs, multiple spaces)
+    3. Numeric patterns in cells
+    4. Alignment patterns
+    5. Consistent column structure
     """
     if block.type != "text":
         return False

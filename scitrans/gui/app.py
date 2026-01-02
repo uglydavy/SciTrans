@@ -262,7 +262,9 @@ def translate_pdf(
             model=model,
             n_candidates=candidates,
             context_window=0,  # Disable context - user doesn't care about it
-            use_cache=False,  # ALWAYS disable cache - ensure fresh translation
+            use_cache=False,
+            parallel_translation=True,  # Enable parallel translation for speed
+            max_workers=4,  # Use 4 parallel workers  # ALWAYS disable cache - ensure fresh translation
             enable_reranking=rerank,  # CRITICAL: Must be True for cascade_free to work well
             translate_tables=translate_tables,
             render_mode="perfect",  # Use perfect renderer
@@ -816,18 +818,19 @@ def create_gui():
                             )
 
                         gr.Markdown("### Backend & Model")
-                        backend = gr.Dropdown(
-                            choices=list(BACKEND_MODELS.keys()),
-                            value="cascade_free",
-                            label="Backend",
-                            info="Select translation backend",
-                        )
-                        model = gr.Dropdown(
-                            choices=BACKEND_MODELS["cascade_free"],
-                            value="cascade_free",
-                            label="Model",
-                            info="Select specific model for the backend",
-                        )
+                        with gr.Row():
+                            backend = gr.Dropdown(
+                                choices=list(BACKEND_MODELS.keys()),
+                                value="cascade_free",
+                                label="Backend",
+                                info="cascade_free uses ollama & google together",
+                            )
+                            model = gr.Dropdown(
+                                choices=BACKEND_MODELS["cascade_free"],
+                                value="cascade_free",
+                                label="Model",
+                                info="Select specific model for the backend",
+                            )
 
                         def update_models(backend_choice):
                             models = get_models_for_backend(backend_choice)
@@ -884,7 +887,7 @@ def create_gui():
                                 with gr.Tabs():
                                     with gr.Tab("Source PDF"):
                                         source_preview = gr.Image(
-                                            label="Source PDF", type="filepath", height=400
+                                            label="Source PDF", type="filepath", height=600
                                         )
                                         with gr.Row():
                                             source_prev_btn = gr.Button(
@@ -909,7 +912,7 @@ def create_gui():
 
                                     with gr.Tab("Translated PDF"):
                                         output_preview = gr.Image(
-                                            label="Translated PDF", type="filepath", height=400
+                                            label="Translated PDF", type="filepath", height=600
                                         )
                                         with gr.Row():
                                             output_prev_btn = gr.Button(
