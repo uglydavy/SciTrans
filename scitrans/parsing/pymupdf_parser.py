@@ -11,6 +11,10 @@ from scitrans.parsing.layout import (
     merge_paragraph_blocks,
     sort_blocks_multicolumn,
 )
+from scitrans.parsing.enhanced_font_extractor import (
+    extract_enhanced_font_from_span,
+    get_font_fallback,
+)
 
 
 def _bbox_from_tuple(t: tuple[float, float, float, float]) -> BBox:
@@ -90,11 +94,20 @@ def _detect_and_tag_headers_titles(blocks: list[Block], page_index_map: dict[str
         
         # Classify block type - IMPROVED: More lenient title detection
         # Title: Very large font OR first page + large font OR short text + large font
-        is_first_page = False  # Will be set if block is on first page
+        is_first_page = False
+        if page_index_map and block.id in page_index_map:
+            is_first_page = (page_index_map[block.id] == 0)
+        
+        # IMPROVED: More lenient detection for headers/titles, especially for mixed-language documents
+        # Check if text contains CJK characters (Chinese/Japanese/Korean) - these are often headers
+        has_cjk = any(0x4E00 <= ord(c) <= 0x9FFF or 0x3040 <= ord(c) <= 0x30FF or 0xAC00 <= ord(c) <= 0xD7AF for c in block_text)
+        
         is_title_candidate = (
             max_font_size >= 16 or  # Lowered from 18
             (max_font_size >= 14 and is_bold and len(block_text) < 150) or  # More lenient
-            (max_font_size >= 12 and is_bold and len(block_text) < 50 and block_text[0].isupper())  # Short bold uppercase
+            (max_font_size >= 12 and is_bold and len(block_text) < 50 and block_text[0].isupper()) or  # Short bold uppercase
+            (is_first_page and max_font_size >= 12 and len(block_text) < 100) or  # First page + large font
+            (has_cjk and max_font_size >= 10 and len(block_text) < 50)  # CJK text with reasonable font size
         )
         
         if is_title_candidate:
@@ -120,6 +133,10 @@ def _detect_and_tag_headers_titles(blocks: list[Block], page_index_map: dict[str
                 block.meta["has_list_number"] = True
             if is_roman_numeral:
                 block.meta["has_roman_numeral"] = True
+        elif has_cjk and max_font_size >= 10:
+            # CJK text with reasonable font size - likely a header
+            block.meta["block_type"] = "header"
+            block.meta["is_header"] = True
         
         # Store font info for rendering
         if font_sizes:
@@ -198,25 +215,65 @@ def parse_pdf(path: str, use_layout_intelligence: bool = True) -> Document:
                             sp.get("bbox", (line_bbox.x0, line_bbox.y0, line_bbox.x1, line_bbox.y1))
                         )
                     )
-                    style = SpanStyle(
-                        font=str(sp.get("font", "Times-Roman")),
-                        size=float(sp.get("size", 11.0)),
-                        flags=int(sp.get("flags", 0)),
-                        color=sp.get("color"),
-                    )
+                    # Use enhanced font extraction for better accuracy
+                    try:
+                        enhanced_font = extract_enhanced_font_from_span(sp)
+                        # Get fallback font name in case original is not available
+                        fallback_font = get_font_fallback(
+                            enhanced_font.family,
+                            enhanced_font.weight,
+                            enhanced_font.style
+                        )
+                        style = SpanStyle(
+                            font=fallback_font,  # Use fallback for rendering compatibility
+                            size=enhanced_font.size,
+                            flags=enhanced_font.flags,
+                            color=enhanced_font._color_to_int() if enhanced_font.color else None,
+                        )
+                        # Store original font info in span metadata for reference
+                        # (Note: SpanStyle is frozen, so we store in block.meta later)
+                    except Exception as e:
+                        logger.debug(f"Enhanced font extraction failed for span, using basic extraction: {e}")
+                        # Fallback to basic extraction
+                        style = SpanStyle(
+                            font=str(sp.get("font", "Times-Roman")),
+                            size=float(sp.get("size", 11.0)),
+                            flags=int(sp.get("flags", 0)),
+                            color=sp.get("color"),
+                        )
                     spans.append(Span(text=sp_text, bbox=sp_bbox, style=style))
                 lines.append(Line(spans=spans, bbox=line_bbox))
 
             # Generate deterministic ID from page, bbox, and text content
             text_content = "".join(text_parts)
             block_id = _deterministic_block_id(page_index, bbox, text_content)
+            
+            # Store enhanced font metadata in block.meta for rendering
+            # Collect all unique font families, sizes, and styles from spans
+            font_families = set()
+            font_sizes = []
+            for line in lines:
+                for span in line.spans:
+                    if span.style:
+                        font_families.add(span.style.font)
+                        if span.style.size:
+                            font_sizes.append(float(span.style.size))
+            
+            block_meta = {
+                "raw_type": 0,
+                "font_families": list(font_families) if font_families else ["Times-Roman"],
+                "avg_font_size": sum(font_sizes) / len(font_sizes) if font_sizes else 11.0,
+                "min_font_size": min(font_sizes) if font_sizes else 11.0,
+                "max_font_size": max(font_sizes) if font_sizes else 11.0,
+            }
+            
             blocks.append(
                 Block(
                     id=block_id,
                     type="text",
                     bbox=bbox,
                     lines=lines,
-                    meta={"raw_type": 0},
+                    meta=block_meta,
                 )
             )
 

@@ -31,33 +31,119 @@ from scitrans.utils.env_loader import load_environment_variables
 
 app = typer.Typer(
     add_completion=False,
-    help="SciTrans-LLMs — Adaptive Scientific PDF Translation System",
+    help="""SciTrans-LLMs — Adaptive Scientific PDF Translation System
+
+A comprehensive PDF translation system with:
+  • Multiple backends (cascade_free, deepseek, anthropic, openai, google, ollama)
+  • Real-time quality scoring and automatic retry
+  • Reranking for best translation candidates
+  • Context window support for better quality
+  • Perfect rendering with font preservation
+  • Interactive GUI with metrics visualization
+  • Feature testing and ablation studies
+  • Quality scoring and comparison tools
+
+Commands:
+  translate    Translate a PDF document with full quality scoring
+  repair       Repair failed blocks from previous translation
+  gui          Launch interactive web GUI with metrics, testing, and visualizations
+  backends     List available translation backends and their status
+  status       Check system status and backend availability
+  info         Show system info or analyze PDF structure
+  batch        Batch translate multiple PDFs
+  export       Export translations to different formats (JSON, LaTeX, Word)
+  test         Run feature tests (parsing, masking, translation, rendering, scoring)
+  score        Compare source PDF vs translated PDF quality scores
+  visualize    Generate visualizations of translation quality metrics
+
+Translation Options:
+  --in, --out          Input and output PDF paths
+  --source, --target   Source and target languages (default: en → fr)
+  --backend            Backend: cascade_free (default), deepseek, anthropic, openai, google, ollama
+  --n-candidates       Number of translation candidates (default: 3, higher = better quality)
+  --context            Context window size (default: 2, higher = better consistency)
+  --render-mode        perfect (exact fonts), enhanced (preserve styling), math-aware, math-safe
+  --translate-tables   Translate tables instead of preserving them
+  --no-rerank          Disable reranking (NOT RECOMMENDED)
+  --no-retry           Disable automatic retry on failures (NOT RECOMMENDED)
+  --parallel           Enable parallel block translation (experimental)
+  --verbose, --debug   Verbose/debug output
+
+Quality & Scoring:
+  • Real-time scoring: Each block is scored immediately after translation
+  • Automatic retry: Blocks with score <75% are automatically retried
+  • Reranking: Best candidate selected from multiple translations
+  • Context window: Uses previous blocks for consistency
+  • Identity detection: Detects when translation equals source (bad)
+  • Health metrics: Tracks rendering quality and layout preservation
+
+Examples:
+  # Basic translation
+  scitrans translate --in doc.pdf --out doc_fr.pdf
+  
+  # High-quality translation with context
+  scitrans translate --in doc.pdf --out doc_fr.pdf --backend cascade_free --n-candidates 5 --context 3
+  
+  # Translation with table support
+  scitrans translate --in doc.pdf --out doc_fr.pdf --translate-tables
+  
+  # Debug mode for troubleshooting
+  scitrans translate --in doc.pdf --out doc_fr.pdf --debug
+  
+  # Launch GUI for interactive use
+  scitrans gui
+  
+  # Check backend status
+  scitrans backends
+  
+  # Run feature tests
+  scitrans test
+  
+  # Compare quality scores
+  scitrans score --source doc.pdf --translated doc_fr.pdf
+""",
     rich_markup_mode="rich",
 )
 console = Console()
 
 
 def _get_backend(name: str, model: str):
+    """Get backend instance with proper error handling for API keys."""
+    import os
     name = name.lower().strip()
-    if name == "cascade_free":
-        return CascadeFreeBackend(model=model)
-    if name == "dummy":
-        return DummyBackend(model=model)
-    if name == "deepseek":
-        return DeepSeekBackend(model=model)
-    if name == "anthropic":
-        return AnthropicBackend(model=model)
-    if name in ("openai", "gpt", "cascade"):
-        return OpenAIBackend(model=model)
-    if name in ("google", "google_free"):
-        return GoogleTranslateBackend(model=model)
-    if name in ("huggingface", "hf"):
-        return HuggingFaceBackend(model=model)
-    if name == "ollama":
-        return OllamaBackend(model=model)
-    raise typer.BadParameter(
-        f"Unknown backend: {name}. Available: cascade_free (default, uses ollama & google together), deepseek, anthropic, openai, google, huggingface, ollama, dummy"
-    )
+    
+    try:
+        if name == "cascade_free":
+            return CascadeFreeBackend(model=model)
+        if name == "dummy":
+            return DummyBackend(model=model)
+        if name == "deepseek":
+            if not os.getenv("DEEPSEEK_API_KEY"):
+                raise ValueError("DEEPSEEK_API_KEY not set. Set it in .env file or environment variables.")
+            return DeepSeekBackend(model=model)
+        if name == "anthropic":
+            if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("ANTHROPIC_AUTH_TOKEN"):
+                raise ValueError("ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN not set. Set it in .env file or environment variables.")
+            return AnthropicBackend(model=model)
+        if name in ("openai", "gpt", "cascade"):
+            if not os.getenv("OPENAI_API_KEY"):
+                raise ValueError("OPENAI_API_KEY not set. Set it in .env file or environment variables.")
+            return OpenAIBackend(model=model)
+        if name in ("google", "google_free"):
+            return GoogleTranslateBackend(model=model)
+        if name in ("huggingface", "hf"):
+            return HuggingFaceBackend(model=model)
+        if name == "ollama":
+            return OllamaBackend(model=model)
+        raise typer.BadParameter(
+            f"Unknown backend: {name}. Available: cascade_free (default, uses ollama & google together), deepseek, anthropic, openai, google, huggingface, ollama, dummy"
+        )
+    except ValueError as e:
+        # Re-raise ValueError with clearer message
+        raise ValueError(f"Backend '{name}' initialization failed: {e}") from e
+    except Exception as e:
+        # Catch other initialization errors (e.g., ImportError, API errors)
+        raise ValueError(f"Backend '{name}' initialization failed: {e}. Check API keys and dependencies.") from e
 
 
 @app.command()
@@ -177,6 +263,11 @@ def translate(
     console.print(f"  Render Mode: {render_mode}")
     console.print()
 
+    # Disable parallel translation for cascade_free (it handles parallelization internally)
+    use_parallel = parallel and backend.lower() != "cascade_free"
+    if backend.lower() == "cascade_free" and parallel:
+        console.print("[yellow]⚠️  Parallel translation disabled for cascade_free (it parallelizes internally)[/yellow]")
+    
     cfg = PipelineConfig(
         source_lang=source,
         target_lang=target,
@@ -189,8 +280,8 @@ def translate(
         retry_failed=not no_retry,  # ON by default (innovation)
         render_mode=render_mode,  # auto/math-aware/math-safe
         translate_tables=translate_tables,
-        parallel_translation=parallel,  # Parallel translation
-        max_workers=max_workers,  # Max workers for parallel
+        parallel_translation=use_parallel,  # Parallel translation (disabled for cascade_free)
+        max_workers=max_workers if use_parallel else 1,  # Max workers for parallel
     )
     # Choose backend-specific default model if caller left default "cascade_free"
     chosen_model = model

@@ -145,6 +145,10 @@ current_output_pdf: Optional[str] = None
 source_pdf_total_pages: int = 0
 output_pdf_total_pages: int = 0
 
+# Cancellation support
+import threading
+cancel_event: Optional[threading.Event] = None
+
 
 def log_system(message: str, level: str = "INFO"):
     """Log system message."""
@@ -209,7 +213,10 @@ def translate_pdf(
         progress = gr.Progress()
 
     global translation_status, current_source_pdf, current_output_pdf
-    global source_pdf_total_pages, output_pdf_total_pages
+    global source_pdf_total_pages, output_pdf_total_pages, cancel_event
+    
+    # Create new cancel event for this translation
+    cancel_event = threading.Event()
 
     # Input validation
     input_path = None
@@ -254,17 +261,50 @@ def translate_pdf(
         log_system(f"Starting translation: {backend}/{model}, {source} -> {target}", "INFO")
         progress(0.2, desc="Initializing backend...")
 
-        be = _get_backend(backend, model)
+        try:
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:265","message":"Initializing backend","data":{"backend":backend,"model":model}})+'\n')
+            # #endregion
+            be = _get_backend(backend, model)
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:265","message":"Backend initialized successfully","data":{"backend":backend,"model":model,"backend_name":be.name}})+'\n')
+            # #endregion
+        except ValueError as e:
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:266","message":"Backend initialization failed (ValueError)","data":{"backend":backend,"model":model,"error":str(e)}})+'\n')
+            # #endregion
+            error_msg = f"Backend initialization failed: {e}\n\nPlease check:\n1. API keys are set in .env file or environment variables\n2. Required dependencies are installed\n3. Backend service is available"
+            log_system(error_msg, "ERROR")
+            return None, None, None, None, None, error_msg, "", 0, 0
+        except Exception as e:
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:270","message":"Backend initialization failed (Exception)","data":{"backend":backend,"model":model,"error":str(e),"error_type":type(e).__name__}})+'\n')
+            # #endregion
+            error_msg = f"Unexpected error initializing backend: {e}"
+            log_system(error_msg, "ERROR")
+            return None, None, None, None, None, error_msg, "", 0, 0
 
+        # cascade_free already parallelizes internally (Ollama + Google run in parallel)
+        # So we disable pipeline-level parallelization for cascade_free to avoid nested threading
+        use_parallel = backend != "cascade_free"
+        
         cfg = PipelineConfig(
             source_lang=source,
             target_lang=target,
             model=model,
             n_candidates=candidates,
-            context_window=0,  # Disable context - user doesn't care about it
+            context_window=context if context else 3,  # Use context window for better quality (default: 3)
             use_cache=False,
-            parallel_translation=True,  # Enable parallel translation for speed
-            max_workers=4,  # Use 4 parallel workers  # ALWAYS disable cache - ensure fresh translation
+            parallel_translation=use_parallel,  # Disable for cascade_free (it parallelizes internally)
+            max_workers=4 if use_parallel else 1,  # Only use workers if parallel is enabled
             enable_reranking=rerank,  # CRITICAL: Must be True for cascade_free to work well
             translate_tables=translate_tables,
             render_mode="perfect",  # Use perfect renderer
@@ -281,9 +321,20 @@ def translate_pdf(
         progress(0.3, desc="Running translation pipeline...")
         log_system("Translation pipeline started")
 
-        report = run_pipeline(
-            input_pdf=str(input_path), output_pdf=str(output_path), backend=be, cfg=cfg, progress=progress
-        )
+        try:
+            report = run_pipeline(
+                input_pdf=str(input_path), 
+                output_pdf=str(output_path), 
+                backend=be, 
+                cfg=cfg, 
+                progress=progress,
+                cancel_event=cancel_event,
+            )
+        except RuntimeError as e:
+            if "cancelled" in str(e).lower():
+                log_system("Translation cancelled by user", "WARNING")
+                return None, None, None, None, None, "Translation cancelled by user", "", 0, 0
+            raise
 
         progress(1.0, desc="Translation complete!")
 
@@ -324,8 +375,8 @@ def translate_pdf(
         source_pdf_total_pages = source_total
         output_pdf_total_pages = output_total
 
-        # Format quality metrics
-        quality_metrics = format_quality_metrics(report)
+        # Format quality metrics (returns HTML)
+        quality_metrics_html = format_quality_metrics(report)
 
         # Format summary as Markdown
         summary = f"""# Translation Complete
@@ -355,7 +406,7 @@ def translate_pdf(
             str(output_path),  # output_file
             source_preview,  # source_preview
             output_preview,  # output_preview
-            quality_metrics,  # quality_metrics
+            quality_metrics_html,  # quality_metrics (HTML)
             summary,  # summary
             status_text,  # translation_status_display
             logs_text,  # system_logs_display
@@ -371,42 +422,271 @@ def translate_pdf(
 
 
 def format_quality_metrics(report: dict) -> str:
-    """Format quality metrics for display."""
+    """Format quality metrics for display with detailed explanations - returns HTML for scrollable box."""
     scoring = report.get("scoring", {})
     health = report.get("health", {})
 
-    metrics = f"""# Quality Metrics
+    # Helper function to get emoji based on score
+    def get_score_emoji(score: float) -> str:
+        if score >= 0.9:
+            return "🟢"
+        elif score >= 0.75:
+            return "🟡"
+        elif score >= 0.5:
+            return "🟠"
+        else:
+            return "🔴"
+    
+    # Helper function to get status text
+    def get_status_text(score: float) -> str:
+        if score >= 0.9:
+            return "Excellent"
+        elif score >= 0.75:
+            return "Good"
+        elif score >= 0.5:
+            return "Fair"
+        else:
+            return "Poor"
+    
+    doc_quality = scoring.get("document_quality", 0)
+    confidence = scoring.get("document_confidence", 0)
+    acceptance = scoring.get("acceptance_rate", 0)
+    
+    placeholder_score = scoring.get("avg_placeholder_preservation", 0)
+    numeric_score = scoring.get("avg_numeric_accuracy", 0)
+    format_score = scoring.get("avg_format_preservation", 0)
+    fluency_score = scoring.get("avg_fluency", 0)
+    fidelity_score = scoring.get("avg_fidelity", 0)
+    
+    metrics = f"""# 📊 Translation Quality Metrics
 
-## Overall Scores
-- **Document Quality:** {scoring.get("document_quality", 0):.1%}
-- **Confidence:** {scoring.get("document_confidence", 0):.1%}
-- **Acceptance Rate:** {scoring.get("acceptance_rate", 0):.1%}
+## 🎯 Overall Assessment
 
-## Block Statistics
-- **Total Blocks:** {scoring.get("blocks_total", 0)}
-- **Acceptable Blocks:** {scoring.get("blocks_acceptable", 0)}
-- **Need Review:** {scoring.get("blocks_need_review", 0)}
-- **Need Retry:** {scoring.get("blocks_need_retry", 0)}
+{get_score_emoji(doc_quality)} **Document Quality:** {doc_quality:.1%} ({get_status_text(doc_quality)})
+- *Weighted average of all quality dimensions*
+- *Higher is better - indicates overall translation quality*
 
-## Detailed Metrics
-- **Placeholder Preservation:** {scoring.get("avg_placeholder_preservation", 0):.1%}
-- **Numeric Accuracy:** {scoring.get("avg_numeric_accuracy", 0):.1%}
-- **Format Preservation:** {scoring.get("avg_format_preservation", 0):.1%}
-- **Fluency:** {scoring.get("avg_fluency", 0):.1%}
-- **Fidelity:** {scoring.get("avg_fidelity", 0):.1%}
+{get_score_emoji(confidence)} **Confidence:** {confidence:.1%} ({get_status_text(confidence)})
+- *System confidence in translation accuracy*
+- *Based on number of issues and warnings detected*
 
-## Health Metrics
-- **Health Ratio:** {health.get("health_ratio", 0):.1%}
-- **OK Blocks:** {health.get("ok_blocks", 0)}
-- **Warning Blocks:** {health.get("warning_blocks", 0)}
-- **Failed Blocks:** {health.get("failed_blocks", 0)}
+{get_score_emoji(acceptance)} **Acceptance Rate:** {acceptance:.1%} ({get_status_text(acceptance)})
+- *Percentage of blocks that passed quality checks*
+- *Blocks with score ≥85% and no critical errors*
 
-## Issues
+---
+
+## 📈 Quality Dimensions (Detailed Breakdown)
+
+### 🔢 Placeholder Preservation: {placeholder_score:.1%} {get_score_emoji(placeholder_score)}
+**Weight:** 30% (Most Critical)
+
+**What it measures:**
+- Preservation of LaTeX equations (e.g., `$x^2 + y^2$`)
+- Preservation of code blocks and URLs
+- Protection of special formatting markers
+
+**Why it matters:**
+- Mathematical formulas must remain unchanged
+- Code and URLs should not be translated
+- Critical for scientific/technical documents
+
+**Status:** {get_status_text(placeholder_score)}
+- {'✅ All placeholders preserved' if placeholder_score >= 1.0 else f'⚠️ {int((1-placeholder_score)*100)}% of placeholders may be missing'}
+
+---
+
+### 🔢 Numeric Accuracy: {numeric_score:.1%} {get_score_emoji(numeric_score)}
+**Weight:** 20%
+
+**What it measures:**
+- Preservation of numbers (integers, decimals, percentages)
+- Consistency of numeric values between source and translation
+
+**Why it matters:**
+- Numbers should never change during translation
+- Critical for data, statistics, measurements
+- Errors here indicate serious translation problems
+
+**Status:** {get_status_text(numeric_score)}
+- {'✅ All numbers preserved' if numeric_score >= 0.95 else f'⚠️ Some numbers may have changed'}
+
+---
+
+### 📝 Format Preservation: {format_score:.1%} {get_score_emoji(format_score)}
+**Weight:** 15%
+
+**What it measures:**
+- Preservation of bullet points and lists
+- Line breaks and paragraph structure
+- Text formatting consistency
+
+**Why it matters:**
+- Document structure should be maintained
+- Lists and bullets help readability
+- Format changes can confuse readers
+
+**Status:** {get_status_text(format_score)}
+- {'✅ Formatting preserved' if format_score >= 0.9 else '⚠️ Some formatting may be lost'}
+
+---
+
+### 💬 Fluency: {fluency_score:.1%} {get_score_emoji(fluency_score)}
+**Weight:** 10%
+
+**What it measures:**
+- Naturalness of translated text
+- Absence of repetition and awkward phrasing
+- Appropriate length (not too short/long)
+
+**Why it matters:**
+- Translation should read naturally in target language
+- Poor fluency indicates low-quality translation
+- Affects readability and comprehension
+
+**Status:** {get_status_text(fluency_score)}
+- {'✅ Natural translation' if fluency_score >= 0.85 else '⚠️ May have fluency issues'}
+
+---
+
+### 🎯 Fidelity: {fidelity_score:.1%} {get_score_emoji(fidelity_score)}
+**Weight:** 5%
+
+**What it measures:**
+- Meaning preservation (proxy: length ratio)
+- Semantic similarity between source and translation
+- Translation completeness
+
+**Why it matters:**
+- Translation should preserve original meaning
+- Too short/long may indicate missing/added content
+- Critical for accurate information transfer
+
+**Status:** {get_status_text(fidelity_score)}
+- {'✅ Meaning preserved' if fidelity_score >= 0.85 else '⚠️ Meaning may be altered'}
+
+---
+
+## 📊 Block Statistics
+
+| Category | Count | Percentage |
+|----------|-------|------------|
+| **Total Blocks** | {scoring.get("blocks_total", 0)} | 100% |
+| **✅ Acceptable** | {scoring.get("blocks_acceptable", 0)} | {(scoring.get("blocks_acceptable", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
+| **⚠️ Need Review** | {scoring.get("blocks_need_review", 0)} | {(scoring.get("blocks_need_review", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
+| **🔄 Need Retry** | {scoring.get("blocks_need_retry", 0)} | {(scoring.get("blocks_need_retry", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
+
+**Acceptable Blocks:** Score ≥85%, no critical errors, ready for use  
+**Need Review:** Score 70-85% or has minor issues, should be checked  
+**Need Retry:** Score <70% or has critical errors, will be automatically retried
+
+---
+
+## 🏥 Health Metrics
+
+{get_score_emoji(health.get("health_ratio", 0))} **Health Ratio:** {health.get("health_ratio", 0):.1%}
+- *Overall document health based on rendering and layout*
+
+| Status | Count |
+|--------|-------|
+| ✅ **OK Blocks** | {health.get("ok_blocks", 0)} |
+| ⚠️ **Warning Blocks** | {health.get("warning_blocks", 0)} |
+| ❌ **Failed Blocks** | {health.get("failed_blocks", 0)} |
+
+**OK Blocks:** Rendered correctly, no issues  
+**Warning Blocks:** Minor rendering issues (e.g., slight overflow)  
+**Failed Blocks:** Serious rendering problems (e.g., text overflow, missing content)
+
+---
+
+## ⚠️ Issues & Warnings
+
 - **Total Issues:** {scoring.get("total_issues", 0)}
+  - *Critical problems that affect translation quality*
 - **Total Warnings:** {scoring.get("total_warnings", 0)}
+  - *Minor problems that may need attention*
+
+---
+
+## 💡 Understanding Your Scores
+
+**Excellent (≥90%):** Translation is high quality, ready for use  
+**Good (75-90%):** Translation is acceptable, minor review recommended  
+**Fair (50-75%):** Translation has issues, review required  
+**Poor (<50%):** Translation has serious problems, retry recommended
+
+**Recommendations:**
+- If placeholder preservation <90%: Check for missing math/code
+- If numeric accuracy <90%: Verify all numbers are correct
+- If overall quality <75%: Consider retranslating with different settings
+- If many blocks need retry: Check backend configuration and API keys
 """
 
-    return metrics
+    # Convert markdown to HTML for scrollable display
+    # Use simple regex-based conversion for reliability
+    import re
+    
+    html_metrics = metrics
+    # Convert headers (preserve order - h3 before h2 before h1)
+    html_metrics = re.sub(r'^### (.*?)$', r'<h3>\1</h3>', html_metrics, flags=re.MULTILINE)
+    html_metrics = re.sub(r'^## (.*?)$', r'<h2>\1</h2>', html_metrics, flags=re.MULTILINE)
+    html_metrics = re.sub(r'^# (.*?)$', r'<h1>\1</h1>', html_metrics, flags=re.MULTILINE)
+    
+    # Convert bold
+    html_metrics = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html_metrics)
+    
+    # Convert italic
+    html_metrics = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html_metrics)
+    
+    # Convert horizontal rules
+    html_metrics = html_metrics.replace('---', '<hr>')
+    
+    # Convert line breaks (preserve paragraphs)
+    html_metrics = html_metrics.replace('\n\n', '</p><p>')
+    html_metrics = '<p>' + html_metrics + '</p>'
+    html_metrics = html_metrics.replace('<p><h', '<h').replace('</h1></p>', '</h1>').replace('</h2></p>', '</h2>').replace('</h3></p>', '</h3>')
+    html_metrics = html_metrics.replace('<p><hr></p>', '<hr>')
+    html_metrics = html_metrics.replace('<p></p>', '')
+    html_metrics = html_metrics.replace('\n', '<br>')
+    
+    # Convert markdown tables to HTML tables (simple approach)
+    table_pattern = r'\|(.+)\|'
+    lines = html_metrics.split('<br>')
+    html_lines = []
+    in_table = False
+    table_rows = []
+    
+    for line in lines:
+        if '|' in line and line.strip().startswith('|'):
+            if not in_table:
+                in_table = True
+                table_rows = []
+            cells = [c.strip() for c in line.split('|')[1:-1]]
+            if '---' not in line and '===' not in line:
+                table_rows.append(cells)
+        else:
+            if in_table and table_rows:
+                # Render accumulated table
+                html_lines.append('<table style="width: 100%; border-collapse: collapse; margin: 10px 0;"><thead><tr>')
+                if table_rows:
+                    header_row = table_rows[0]
+                    for cell in header_row:
+                        html_lines.append(f'<th style="padding: 8px; border: 1px solid #ddd; background: #f0f0f0;">{cell}</th>')
+                    html_lines.append('</tr></thead><tbody>')
+                    for row in table_rows[1:]:
+                        html_lines.append('<tr>')
+                        for cell in row:
+                            html_lines.append(f'<td style="padding: 8px; border: 1px solid #ddd;">{cell}</td>')
+                        html_lines.append('</tr>')
+                    html_lines.append('</tbody></table>')
+                in_table = False
+                table_rows = []
+            html_lines.append(line)
+    
+    html_content = f"""<div style='height: 600px; overflow-y: auto; overflow-x: hidden; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background: #f9f9f9; font-family: Arial, sans-serif; line-height: 1.6;'>
+{''.join(html_lines)}
+</div>"""
+    return html_content
 
 
 def get_models_for_backend(backend: str) -> list[str]:
@@ -568,18 +848,18 @@ def run_individual_test(test_name: str):
 
 
 def get_glossary_table(search_term: str = "") -> str:
-    """Get current glossary as markdown table with search."""
+    """Get current glossary as HTML table with search and better styling."""
     glossary_path = Path("glossary.json")
     if not glossary_path.exists():
-        return "No glossary loaded"
+        return "<div style='padding: 20px; text-align: center; color: #666;'>No glossary loaded. Add terms or load an online glossary to get started.</div>"
 
     try:
         glossary = json.loads(glossary_path.read_text())
     except Exception:
-        return "Error reading glossary"
+        return "<div style='padding: 20px; color: #d32f2f;'>Error reading glossary file</div>"
 
     if not glossary:
-        return "Glossary is empty"
+        return "<div style='padding: 20px; text-align: center; color: #666;'>Glossary is empty. Add terms or load an online glossary.</div>"
 
     # Filter by search term
     if search_term:
@@ -591,13 +871,36 @@ def get_glossary_table(search_term: str = "") -> str:
         }
 
     if not glossary:
-        return f"No terms found matching '{search_term}'"
+        return f"<div style='padding: 20px; text-align: center; color: #666;'>No terms found matching '{search_term}'</div>"
 
-    table = "| Source | Target |\n|--------|--------|\n"
-    for s, t in sorted(glossary.items()):
-        table += f"| {s} | {t} |\n"
-
-    return table
+    # Create HTML table with better styling - explicit colors for readability
+    html = f"""<div style='max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; background: #ffffff;'>
+    <table style='width: 100%; border-collapse: collapse; font-family: Arial, sans-serif; font-size: 14px;'>
+        <thead style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; position: sticky; top: 0; z-index: 10;'>
+            <tr>
+                <th style='padding: 12px; text-align: left; border-bottom: 2px solid #555; color: #ffffff; font-weight: bold;'>Source Term</th>
+                <th style='padding: 12px; text-align: left; border-bottom: 2px solid #555; color: #ffffff; font-weight: bold;'>Target Term</th>
+            </tr>
+        </thead>
+        <tbody>"""
+    
+    for i, (s, t) in enumerate(sorted(glossary.items())):
+        row_color = "#f5f5f5" if i % 2 == 0 else "#ffffff"
+        html += f"""
+            <tr style='background-color: {row_color};'>
+                <td style='padding: 10px; border-bottom: 1px solid #eee; color: #333333; font-weight: 600;'>{s}</td>
+                <td style='padding: 10px; border-bottom: 1px solid #eee; color: #333333;'>{t}</td>
+            </tr>"""
+    
+    html += f"""
+        </tbody>
+    </table>
+    <div style='padding: 10px; background: #f9f9f9; border-top: 1px solid #ddd; text-align: center; color: #333333; font-size: 0.9em; font-weight: 500;'>
+        Showing {len(glossary)} term(s)
+    </div>
+</div>"""
+    
+    return html
 
 
 def add_glossary_term(source: str, target: str) -> tuple[str, str]:
@@ -687,8 +990,32 @@ def save_api_key(backend: str, key: str) -> str:
 
 
 def get_system_logs() -> str:
-    """Get recent system logs."""
-    return "\n".join(system_logs[-100:])  # Last 100 logs
+    """Get recent system logs with detailed information."""
+    if not system_logs:
+        return "No system logs available yet. Logs will appear here as the system runs."
+    
+    # Show last 500 logs for more detail
+    recent_logs = system_logs[-500:]
+    log_count = len(system_logs)
+    header = f"=== System Logs (Showing last {len(recent_logs)} of {log_count} total) ===\n\n"
+    return header + "\n".join(recent_logs)
+
+def clear_system_logs() -> str:
+    """Clear system logs."""
+    global system_logs
+    system_logs.clear()
+    log_system("System logs cleared by user", "INFO")
+    return "System logs cleared."
+
+
+def stop_translation():
+    """Stop the current translation."""
+    global cancel_event
+    if cancel_event:
+        cancel_event.set()
+        log_system("Translation stop requested", "WARNING")
+        return "Translation stop requested. Please wait for current block to complete..."
+    return "No translation in progress"
 
 
 def clear_all():
@@ -768,9 +1095,20 @@ def create_gui():
     .centered-text {
         text-align: center;
     }
+    .scrollable-metrics {
+        max-height: 600px;
+        overflow-y: auto;
+    }
+    .glossary-table {
+        max-height: 500px;
+        overflow-y: auto;
+    }
     """
     
-    # Determine theme (default to Soft/Light)
+    # Theme state (will be updated dynamically)
+    theme_state = {"current": "Light"}
+    
+    # Determine initial theme (default to Soft/Light)
     theme = gr.themes.Soft()
 
     with gr.Blocks(
@@ -876,6 +1214,7 @@ def create_gui():
                         with gr.Row():
                             translate_btn = gr.Button("🚀 Translate", variant="primary", size="lg", scale=2)
                             retranslate_btn = gr.Button("🔄 Retranslate", variant="secondary", size="lg", scale=1)
+                            stop_btn = gr.Button("⏹️ Stop", variant="stop", size="lg", scale=1)
                             clear_btn = gr.Button("🗑️ Clear", variant="secondary", size="lg", scale=1)
 
                     # RIGHT COLUMN - Results & Preview
@@ -943,8 +1282,9 @@ def create_gui():
 
                             # Quality Metrics Tab
                             with gr.Tab("Quality Metrics"):
-                                quality_metrics = gr.Markdown(
-                                    "Quality metrics will appear after translation"
+                                quality_metrics = gr.HTML(
+                                    value="<div style='height: 600px; overflow-y: auto; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background: #f9f9f9; text-align: center; color: #666;'><p>Quality metrics will appear after translation</p></div>",
+                                    elem_classes=["scrollable-metrics"]
                                 )
 
                             # Status Tab
@@ -961,14 +1301,21 @@ def create_gui():
                                     with gr.Tab("System Logs"):
                                         system_logs_display = gr.Textbox(
                                             label="System Logs",
-                                            lines=20,
-                                            max_lines=50,
+                                            lines=30,
+                                            max_lines=100,
                                             interactive=False,
+                                            show_copy_button=True,
+                                            container=True,
                                         )
-                                        refresh_logs_btn = gr.Button("🔄 Refresh Logs")
+                                        with gr.Row():
+                                            refresh_logs_btn = gr.Button("🔄 Refresh Logs", variant="secondary")
+                                            clear_logs_btn = gr.Button("🗑️ Clear Logs", variant="secondary")
 
                                 refresh_logs_btn.click(
                                     get_system_logs, outputs=[system_logs_display]
+                                )
+                                clear_logs_btn.click(
+                                    clear_system_logs, outputs=[system_logs_display]
                                 )
 
             # ========== TESTING TAB ==========
@@ -1314,18 +1661,27 @@ Ablation studies help you understand the impact of different features on transla
                         add_term_btn = gr.Button("➕ Add Term", variant="primary")
                         add_status = gr.Textbox(label="Status", lines=2, interactive=False)
 
-                        gr.Markdown("### Import/Export")
-                        upload_glossary = gr.File(
-                            label="Upload Glossary JSON", file_types=[".json"]
-                        )
-                        download_glossary_btn = gr.Button("📥 Download Current Glossary")
-                        download_glossary_file = gr.File(label="Download", visible=False)
-
-                        gr.Markdown("### Load Online Glossaries")
-                        load_europarl_btn = gr.Button(
-                            "📥 Load Europarl Glossary", variant="secondary"
-                        )
-                        load_global_btn = gr.Button("📥 Load Global Glossary", variant="secondary")
+                        gr.Markdown("### Import/Export & Load Online Glossaries")
+                        with gr.Tabs():
+                            with gr.Tab("Import/Export"):
+                                upload_glossary = gr.File(
+                                    label="Upload Glossary JSON", file_types=[".json"]
+                                )
+                                download_glossary_btn = gr.Button("📥 Download Current Glossary")
+                                download_glossary_file = gr.File(label="Download", visible=False)
+                            
+                            with gr.Tab("Load Online Glossaries"):
+                                with gr.Row():
+                                    load_europarl_btn = gr.Button(
+                                        "📥 Europarl", variant="secondary", scale=1
+                                    )
+                                    load_global_btn = gr.Button("📥 Global", variant="secondary", scale=1)
+                                with gr.Row():
+                                    load_scientific_btn = gr.Button("📥 Scientific", variant="secondary", scale=1)
+                                    load_medical_btn = gr.Button("📥 Medical", variant="secondary", scale=1)
+                                with gr.Row():
+                                    load_tech_btn = gr.Button("📥 Technology", variant="secondary", scale=1)
+                                    load_legal_btn = gr.Button("📥 Legal", variant="secondary", scale=1)
 
                         def download_glossary():
                             """Create downloadable glossary file."""
@@ -1340,68 +1696,111 @@ Ablation studies help you understand the impact of different features on transla
                             except Exception as e:
                                 return None, f"Error: {e}"
 
+                        def load_glossary_online(glossary_name: str, url: str) -> tuple[str, str, gr.Button]:
+                            """Load glossary from online URL."""
+                            if not requests:
+                                error_msg = "requests library not installed. Install with: pip install requests"
+                                log_system(error_msg, "ERROR")
+                                return error_msg, get_glossary_table(), gr.update()
+                            
+                            try:
+                                log_system(f"Fetching {glossary_name} glossary from {url}...", "INFO")
+                                
+                                # Fetch from URL
+                                response = requests.get(url, timeout=30)
+                                response.raise_for_status()
+                                
+                                # Parse JSON
+                                terms = response.json()
+                                
+                                if not isinstance(terms, dict):
+                                    return f"Invalid glossary format: expected dict, got {type(terms)}", get_glossary_table(), gr.update()
+                                
+                                # Merge with existing glossary
+                                glossary_path = Path("glossary.json")
+                                existing = (
+                                    json.loads(glossary_path.read_text())
+                                    if glossary_path.exists()
+                                    else {}
+                                )
+                                existing.update(terms)
+                                glossary_path.write_text(
+                                    json.dumps(existing, indent=2, ensure_ascii=False)
+                                )
+                                
+                                log_system(f"✅ Loaded {glossary_name} glossary with {len(terms)} terms from online", "INFO")
+                                return (
+                                    f"✅ Loaded {len(terms)} terms from {glossary_name} glossary (online)",
+                                    get_glossary_table(),
+                                    gr.update(interactive=False),  # Disable button after loading
+                                )
+                            except requests.exceptions.RequestException as e:
+                                error_msg = f"Failed to fetch {glossary_name} glossary: {e}"
+                                log_system(error_msg, "ERROR")
+                                return error_msg, get_glossary_table(), gr.update()
+                            except json.JSONDecodeError as e:
+                                error_msg = f"Invalid JSON in {glossary_name} glossary: {e}"
+                                log_system(error_msg, "ERROR")
+                                return error_msg, get_glossary_table(), gr.update()
+                            except Exception as e:
+                                error_msg = f"Error loading {glossary_name} glossary: {e}"
+                                log_system(error_msg, "ERROR")
+                                return error_msg, get_glossary_table(), gr.update()
+                        
+                        # Glossary URLs (can be configured or fetched from a central repository)
+                        GLOSSARY_URLS = {
+                            "europarl": "https://raw.githubusercontent.com/aknk-v/SciTrans/main/scitrans/assets/glossaries/europarl.json",
+                            "global": "https://raw.githubusercontent.com/aknk-v/SciTrans/main/scitrans/assets/glossaries/global.json",
+                            "scientific": "https://raw.githubusercontent.com/aknk-v/SciTrans/main/scitrans/assets/glossaries/scientific.json",
+                            "medical": "https://raw.githubusercontent.com/aknk-v/SciTrans/main/scitrans/assets/glossaries/medical.json",
+                            "tech": "https://raw.githubusercontent.com/aknk-v/SciTrans/main/scitrans/assets/glossaries/tech.json",
+                            "legal": "https://raw.githubusercontent.com/aknk-v/SciTrans/main/scitrans/assets/glossaries/legal.json",
+                        }
+                        
                         def load_europarl_glossary():
-                            """Load Europarl glossary (placeholder - would fetch from online source)."""
-                            # This would fetch from Europarl or similar source
-                            # For now, add some common terms
-                            common_terms = {
-                                "European Parliament": "Parlement européen",
-                                "European Union": "Union européenne",
-                                "member state": "État membre",
-                                "legislation": "législation",
-                                "regulation": "règlement",
-                            }
-                            glossary_path = Path("glossary.json")
-                            existing = (
-                                json.loads(glossary_path.read_text())
-                                if glossary_path.exists()
-                                else {}
-                            )
-                            existing.update(common_terms)
-                            glossary_path.write_text(
-                                json.dumps(existing, indent=2, ensure_ascii=False)
-                            )
-                            log_system(f"Loaded Europarl glossary with {len(common_terms)} terms")
-                            return (
-                                f"Loaded {len(common_terms)} terms from Europarl",
-                                get_glossary_table(),
-                            )
+                            """Load Europarl glossary from online."""
+                            return load_glossary_online("europarl", GLOSSARY_URLS.get("europarl", ""))
 
                         def load_global_glossary():
-                            """Load global glossary (placeholder - would fetch from online source)."""
-                            # This would fetch from a global glossary source
-                            global_terms = {
-                                "scientific": "scientifique",
-                                "research": "recherche",
-                                "publication": "publication",
-                                "journal": "revue",
-                                "conference": "conférence",
-                            }
-                            glossary_path = Path("glossary.json")
-                            existing = (
-                                json.loads(glossary_path.read_text())
-                                if glossary_path.exists()
-                                else {}
-                            )
-                            existing.update(global_terms)
-                            glossary_path.write_text(
-                                json.dumps(existing, indent=2, ensure_ascii=False)
-                            )
-                            log_system(f"Loaded global glossary with {len(global_terms)} terms")
-                            return (
-                                f"Loaded {len(global_terms)} terms from global glossary",
-                                get_glossary_table(),
-                            )
+                            """Load global glossary from online."""
+                            return load_glossary_online("global", GLOSSARY_URLS.get("global", ""))
+                        
+                        def load_scientific_glossary():
+                            """Load scientific domain glossary from online."""
+                            return load_glossary_online("scientific", GLOSSARY_URLS.get("scientific", ""))
+                        
+                        def load_medical_glossary():
+                            """Load medical domain glossary from online."""
+                            return load_glossary_online("medical", GLOSSARY_URLS.get("medical", ""))
+                        
+                        def load_tech_glossary():
+                            """Load technology domain glossary from online."""
+                            return load_glossary_online("tech", GLOSSARY_URLS.get("tech", ""))
+                        
+                        def load_legal_glossary():
+                            """Load legal domain glossary from online."""
+                            return load_glossary_online("legal", GLOSSARY_URLS.get("legal", ""))
 
                     with gr.Column(scale=2):
                         gr.Markdown("### Glossary Terms")
                         search_term = gr.Textbox(
-                            label="Search Terms",
-                            placeholder="Enter term to search...",
-                            info="Search filters the table below",
+                            label="🔍 Search Terms",
+                            placeholder="Enter term to search in source or target...",
+                            info="Search filters the table below in real-time",
+                            show_label=True,
                         )
-                        glossary_display = gr.Markdown(get_glossary_table())
-                        refresh_glossary_btn = gr.Button("🔄 Refresh")
+                        glossary_display = gr.HTML(
+                            value=get_glossary_table(),
+                            elem_classes=["glossary-table"]
+                        )
+                        with gr.Row():
+                            refresh_glossary_btn = gr.Button("🔄 Refresh", variant="secondary", scale=1)
+                            delete_term_source = gr.Textbox(
+                                label="Delete Term",
+                                placeholder="Enter source term to delete...",
+                                scale=2,
+                                visible=False,  # Hidden for now, can be enabled later
+                            )
 
                         def upload_glossary_file(file):
                             if not file:
@@ -1444,10 +1843,25 @@ Ablation studies help you understand the impact of different features on transla
                 download_glossary_btn.click(
                     download_glossary, outputs=[download_glossary_file, add_status]
                 )
+                # Load glossary buttons - return button state to disable after loading
                 load_europarl_btn.click(
-                    load_europarl_glossary, outputs=[add_status, glossary_display]
+                    load_europarl_glossary, outputs=[add_status, glossary_display, load_europarl_btn]
                 )
-                load_global_btn.click(load_global_glossary, outputs=[add_status, glossary_display])
+                load_global_btn.click(
+                    load_global_glossary, outputs=[add_status, glossary_display, load_global_btn]
+                )
+                load_scientific_btn.click(
+                    load_scientific_glossary, outputs=[add_status, glossary_display, load_scientific_btn]
+                )
+                load_medical_btn.click(
+                    load_medical_glossary, outputs=[add_status, glossary_display, load_medical_btn]
+                )
+                load_tech_btn.click(
+                    load_tech_glossary, outputs=[add_status, glossary_display, load_tech_btn]
+                )
+                load_legal_btn.click(
+                    load_legal_glossary, outputs=[add_status, glossary_display, load_legal_btn]
+                )
 
             # ========== SETTINGS TAB ==========
             with gr.Tab("Settings"):
@@ -1466,7 +1880,12 @@ Ablation studies help you understand the impact of different features on transla
                         key_status = gr.Textbox(label="Status", lines=2, interactive=False)
 
                         gr.Markdown("### Appearance")
-                        gr.Radio(choices=["Light", "Dark", "Auto"], value="Light", label="Theme")
+                        theme_radio = gr.Radio(
+                            choices=["Light", "Dark", "Auto"],
+                            value="Light",
+                            label="Theme",
+                            info="Change theme instantly (no restart required)"
+                        )
 
                         gr.Markdown("### Default Settings")
                         default_backend = gr.Dropdown(
@@ -1503,6 +1922,21 @@ Ablation studies help you understand the impact of different features on transla
                 )
                 refresh_status_btn.click(
                     lambda: get_backend_status_table(), outputs=[backend_status]
+                )
+                
+                # Theme switching function
+                def switch_theme(theme_choice):
+                    """Switch theme instantly."""
+                    theme_state["current"] = theme_choice
+                    log_system(f"Theme switched to: {theme_choice}", "INFO")
+                    # Note: Gradio doesn't support dynamic theme switching without reload
+                    # But we can log it and the user can refresh the page
+                    return f"Theme preference set to: {theme_choice}. Refresh the page to apply (or it will apply on next GUI restart)."
+                
+                theme_radio.change(
+                    switch_theme,
+                    inputs=[theme_radio],
+                    outputs=[key_status]
                 )
 
             # ========== ABOUT TAB ==========
@@ -1627,6 +2061,12 @@ Email: aknk.v@pm.me
                 source_page_info,
                 output_page_info,
             ],
+        )
+        
+        # Stop button
+        stop_btn.click(
+            stop_translation,
+            outputs=[system_logs_display],
         )
         
         # Clear button

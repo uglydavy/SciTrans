@@ -19,6 +19,10 @@ from scitrans.utils.language_detection import (
 )
 from scitrans.utils.line_break_preserver import preserve_line_breaks, preserve_paragraph_spacing
 from scitrans.utils.numbering_detector import NumberingDetector
+from scitrans.utils.identity_translation_detector import (
+    check_identity_translation,
+    IdentityCheckResult,
+)
 
 __all__ = [
     "check_backend_dependencies",
@@ -35,4 +39,6 @@ __all__ = [
     "preserve_line_breaks",
     "preserve_paragraph_spacing",
     "NumberingDetector",
+    "check_identity_translation",
+    "IdentityCheckResult",
 ]

@@ -79,8 +79,27 @@ class PostTranslationScore:
     confidence: float  # 0.0-1.0
 
     def is_acceptable(self) -> bool:
-        """Is this translation acceptable without review?"""
-        return self.overall_score >= 0.85 and not self.needs_retry
+        """Is this translation acceptable without review?
+        
+        A block is acceptable only if:
+        - Overall score is high enough
+        - Doesn't need retry
+        - Has no critical errors (identity_translation, validation_failed, etc.)
+        """
+        # Check for critical errors that make a block unacceptable
+        critical_errors = [
+            "identity_translation",
+            "validation_failed",
+            "wrong_translation_generic_response",
+            "placeholder_missing",
+        ]
+        has_critical_error = any(err in critical_errors for err in self.issues)
+        
+        return (
+            self.overall_score >= 0.85 
+            and not self.needs_retry 
+            and not has_critical_error
+        )
 
 
 def compute_pre_translation_score(block_id: str, text: str) -> PreTranslationScore:
@@ -176,6 +195,10 @@ def compute_post_translation_score(
     translated_text: str,
     registry: dict[str, str],
     errors: list[str],
+    *,
+    is_header: bool = False,
+    is_title: bool = False,
+    is_bullet: bool = False,
 ) -> PostTranslationScore:
     """Assess translation quality after translation.
 
@@ -183,6 +206,32 @@ def compute_post_translation_score(
     """
     issues = list(errors)
     warnings = []
+    
+    # 0. Identity detection (critical for headers/titles)
+    identity_score = 1.0
+    if source_text.strip() and translated_text.strip():
+        source_normalized = " ".join(source_text.strip().split()).lower()
+        translated_normalized = " ".join(translated_text.strip().split()).lower()
+        
+        if source_normalized == translated_normalized:
+            # Exact match = identity translation (bad)
+            identity_score = 0.0
+            if is_header or is_title:
+                issues.append("identity_translation:header_exact_match")
+            else:
+                issues.append("identity_translation:exact_match")
+        else:
+            # Check similarity using character overlap
+            source_chars = set(source_normalized)
+            translated_chars = set(translated_normalized)
+            if source_chars and translated_chars:
+                overlap_ratio = len(source_chars & translated_chars) / len(source_chars | translated_chars)
+                if overlap_ratio > 0.95:  # More than 95% character overlap
+                    identity_score = 0.3
+                    issues.append(f"identity_translation:high_similarity_{overlap_ratio:.2f}")
+                elif overlap_ratio > 0.85:
+                    identity_score = 0.6
+                    warnings.append(f"identity_translation:moderate_similarity_{overlap_ratio:.2f}")
 
     # 1. Placeholder preservation (critical)
     placeholder_score = 1.0
@@ -261,18 +310,31 @@ def compute_post_translation_score(
         issues.append(f"fidelity_concern:length_{len_ratio:.2f}")
 
     # Overall score (weighted average)
+    # Identity score is critical - if it's 0, the overall score should be penalized heavily
     overall_score = (
-        placeholder_score * 0.35  # Most critical
-        + numeric_score * 0.25
-        + format_score * 0.20
+        identity_score * 0.20  # Critical: identity translations are bad
+        + placeholder_score * 0.30  # Most critical after identity
+        + numeric_score * 0.20
+        + format_score * 0.15
         + fluency_score * 0.10
-        + fidelity_score * 0.10
+        + fidelity_score * 0.05
     )
+    
+    # Heavy penalty for identity translations
+    if identity_score < 0.5:
+        overall_score *= 0.5  # Halve the score if identity is detected
 
     # Determine if needs review or retry
     # More lenient thresholds for needs_review to avoid false positives
-    needs_retry = placeholder_score < 0.9 or numeric_score < 0.8 or len(issues) > 2
-    needs_review = overall_score < 0.75 or len(issues) >= 2  # Only flag serious issues
+    # Identity translations always need retry (especially for headers/titles)
+    needs_retry = (
+        identity_score < 0.5  # Identity translation detected
+        or placeholder_score < 0.9 
+        or numeric_score < 0.8 
+        or (is_header and overall_score < 0.85)  # Headers need higher quality
+        or len(issues) > 2
+    )
+    needs_review = overall_score < 0.75 or len(issues) >= 2 or identity_score < 0.7  # Flag identity issues
 
     # Confidence (inverse of issues)
     confidence = max(0.0, 1.0 - (len(issues) * 0.15 + len(warnings) * 0.05))

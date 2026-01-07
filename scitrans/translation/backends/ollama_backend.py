@@ -39,11 +39,13 @@ class OllamaBackend:
 
         # Combine system prompt and user text
         # Make it very clear this is a translation task
+        # CRITICAL: Emphasize placeholder preservation but DO NOT include instructions that will be echoed
+        # The system prompt already has all instructions - we just need to make the task clear
         prompt = (
             f"{req.system_prompt}\n\n"
             f"TRANSLATE THE FOLLOWING TEXT FROM {req.source_lang.upper()} TO {req.target_lang.upper()}:\n\n"
             f"{req.text}\n\n"
-            f"Output ONLY the translated text in {req.target_lang.upper()}, preserving all placeholders."
+            f"Remember: Output ONLY the translated text. Do not include any instructions, explanations, or labels."
         )
 
         payload = {

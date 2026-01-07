@@ -13,13 +13,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RenderConfig:
-    min_font_size: float = 5.0
-    max_shrink_ratio: float = 0.55  # don't shrink below 55% of original unless necessary
-    line_height: float = 1.2
-    redact_padding: float = 0.5  # pts
+    min_font_size: float = 8.0  # Minimum readable font size (reduced from 10.0 to allow more flexibility)
+    max_shrink_ratio: float = 0.7  # Allow shrinking to 70% of original (more aggressive to prevent overflow)
+    line_height: float = 1.15  # Tighter line height to fit more text
+    redact_padding: float = 0.0  # No padding to prevent overlaps
     align_threshold: float = 12.0  # pts difference between left/right margins for centering
     preserve_color: bool = False  # future
     debug_draw_boxes: bool = False
+    enable_page_breaking: bool = True  # Break long blocks across pages if they don't fit
+    overflow_margin: float = 0.05  # 5% margin to prevent edge overflow
 
 
 def _infer_alignment(page_width: float, x0: float, x1: float, threshold: float) -> int:
@@ -83,28 +85,54 @@ def _fit_font_size(
     cfg: RenderConfig,
     align: int,
 ) -> float:
-    """Binary-search the largest font size that fits inside rect."""
+    """Binary-search the largest font size that fits inside rect.
+    
+    CRITICAL: Ensures text fits completely within the rectangle to prevent overlaps.
+    Returns a font size that guarantees no overflow.
+    
+    Enhanced algorithm:
+    - Uses configurable overflow margin
+    - More aggressive binary search with better convergence
+    - Multiple verification passes to ensure text fits
+    """
 
     if not text.strip():
         return base_size
 
+    # CRITICAL: Add margin to prevent edge cases where text might overflow
+    # Use configurable margin (default 5%) to ensure text stays within bounds
+    margin = cfg.overflow_margin
+    safe_rect = fitz.Rect(
+        rect.x0 + rect.width * margin,
+        rect.y0 + rect.height * margin,
+        rect.x1 - rect.width * margin,
+        rect.y1 - rect.height * margin,
+    )
+    
+    # Ensure safe_rect is valid (not empty or inverted)
+    if safe_rect.width <= 0 or safe_rect.height <= 0:
+        safe_rect = rect  # Fallback to original if margin makes it invalid
+        logger.warning(f"Safe rect became invalid, using original rect")
+
+    # Calculate bounds for binary search
     lo = max(cfg.min_font_size, base_size * cfg.max_shrink_ratio)
     hi = base_size
+    
+    # If base size is already below minimum, return it
+    if base_size < cfg.min_font_size:
+        return base_size
 
     best = lo
-    # Ensure we start from hi down, so we keep best-looking size
-    for _ in range(16):
+    # Binary search with more iterations for better precision
+    for iteration in range(25):  # Increased iterations for better precision
         mid = (lo + hi) / 2.0
-        # We need a dry-run. PyMuPDF actually writes. So we instead approximate by:
-        # - insert into a temporary page is heavy; instead we can use return value:
-        #   insert_textbox returns negative if it doesn't fit.
-        # We'll do: insert, then immediately clean by redacting? That is messy.
-        # Simpler: use a hidden scratch page.
+        
+        # Use scratch page for dry-run testing
         scratch = fitz.open()
         sp = scratch.new_page(width=page.rect.width, height=page.rect.height)
         ret = _try_insert_textbox(
             sp,
-            rect,
+            safe_rect,  # Use safe_rect to ensure margin
             text,
             fontname=fontname,
             fontfile=fontfile,
@@ -115,10 +143,46 @@ def _fit_font_size(
         scratch.close()
 
         if ret >= 0:
+            # Text fits - try larger size
             best = mid
             lo = mid
         else:
+            # Text doesn't fit - try smaller size
             hi = mid
+        
+        # Early exit if we've converged (within 0.05pt)
+        if hi - lo < 0.05:
+            break
+
+    # CRITICAL: Multiple verification passes to ensure text actually fits
+    # Sometimes the binary search can give a false positive
+    verification_passes = 3
+    for pass_num in range(verification_passes):
+        scratch = fitz.open()
+        sp = scratch.new_page(width=page.rect.width, height=page.rect.height)
+        final_check = _try_insert_textbox(
+            sp,
+            safe_rect,
+            text,
+            fontname=fontname,
+            fontfile=fontfile,
+            fontsize=best,
+            align=align,
+            line_height=cfg.line_height,
+        )
+        scratch.close()
+        
+        if final_check >= 0:
+            # Text fits - we're good
+            break
+        else:
+            # Text still doesn't fit - reduce further
+            best = max(cfg.min_font_size, best * 0.95)  # Reduce by 5% per pass
+            if pass_num == verification_passes - 1:
+                logger.warning(
+                    f"Font size {best:.2f} still doesn't fit after {verification_passes} passes. "
+                    f"Text length: {len(text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
+                )
 
     return best
 

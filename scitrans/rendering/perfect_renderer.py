@@ -82,7 +82,7 @@ def preserve_bullet_in_translation(source_text: str, translated_text: str) -> st
     # Map source lines to their bullet status
     source_line_bullets = {}
     bullets = ["•", "-", "*", "·", "▪", "▫"]
-    
+
     for i, src_line in enumerate(source_lines):
         bullet_char, _ = extract_bullet_character(src_line)
         source_line_bullets[i] = bullet_char  # Store bullet char for this line, or "" if none
@@ -187,29 +187,42 @@ def _resolve_font_key(base_font: str, flags: int) -> str:
     return f
 
 
-def _get_block_base_style(block: Block, min_font_size: float = 12.0) -> tuple[str, float, int]:
+def _get_block_base_style(block: Block, min_font_size: float = 10.0) -> tuple[str, float, int]:
     """Return (font_name, font_size, flags) for the block.
 
-    Enhanced extraction:
+    Enhanced extraction with fallback support:
     - For headers/titles: Uses max font size and dominant font
     - For normal text: Uses average font size and most common font
     - Ensures minimum font size for readability
     - Preserves bold/italic flags from dominant style
+    - Falls back to defaults if font extraction fails
     """
     if not block.lines:
         return "Times-Roman", max(11.0, min_font_size), 0
     
-    # Collect all font info from all spans
+    # Try to use enhanced metadata from parser first (if available)
+    font_families = block.meta.get("font_families")
+    if font_families:
+        primary_font = font_families[0] if font_families else "Times-Roman"
+        avg_size = block.meta.get("avg_font_size", 11.0)
+        max_size = block.meta.get("max_font_size", 11.0)
+    else:
+        primary_font = "Times-Roman"
+        avg_size = 11.0
+        max_size = 11.0
+    
+    # Collect all font info from all spans for flags and validation
     font_info: list[tuple[str, float, int]] = []
     for line in block.lines:
         for span in line.spans:
             if span.style:
-                font_name = span.style.font or "Times-Roman"
-                font_size = float(span.style.size or 11.0)
+                font_name = span.style.font or primary_font
+                font_size = float(span.style.size or avg_size)
                 flags = int(span.style.flags or 0)
                 font_info.append((font_name, font_size, flags))
     
     if not font_info:
+        # Ultimate fallback to defaults
         return "Times-Roman", max(11.0, min_font_size), 0
     
     # Check if this is a header/title from metadata
@@ -246,9 +259,11 @@ def _get_block_base_style(block: Block, min_font_size: float = 12.0) -> tuple[st
         else:
             font_name = font_info[0][0]
         
-        # Average font size - ensure minimum 12pt for readability
+        # Average font size - use actual average, but ensure reasonable minimum
         avg_size = sum(f[1] for f in font_info) / len(font_info)
-        font_size = max(avg_size, 12.0)  # Enforce 12pt minimum for all text
+        # Don't enforce 12pt minimum - let font fitting handle size reduction
+        # This prevents forcing text to be too large and causing overflow
+        font_size = max(avg_size, 8.0)  # Only enforce 8pt absolute minimum
         
         # Most common flags (majority vote)
         flag_counts: dict[int, int] = {}
@@ -273,12 +288,15 @@ def _should_replace_block(
 
     source_text = _block_text(block)
 
-    # Preserve tables unless explicitly enabled
-    if block.meta.get("region") == "table" and not translate_tables:
+    # Preserve tables unless explicitly enabled, BUT always translate TOC, figures, captions
+    is_table_region = block.meta.get("region") == "table"
+    is_toc = ("table of contents" in source_text.lower() or "contents" in source_text.lower()) and len(source_text) < 100
+    is_figure_caption = any(keyword in source_text.lower() for keyword in ["figure", "fig.", "table", "tab."]) and len(source_text) < 200
+    if is_table_region and not translate_tables and not (is_toc or is_figure_caption):
         # #region agent log
         with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
             import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"J","location":"perfect_renderer.py:278","message":"Table block skipped","data":{"block_id":block.id}})+'\n')
+            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"J","location":"perfect_renderer.py:278","message":"Table block skipped (not TOC/figure)","data":{"block_id":block.id}})+'\n')
         # #endregion
         return False, None, source_text
 
@@ -294,7 +312,7 @@ def _should_replace_block(
         import json
         f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"K","location":"perfect_renderer.py:287","message":"_should_replace_block entry","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"has_target_text":bool(target_text),"source_preview":source_text[:50]}})+'\n')
     # #endregion
-    
+
     # Missing / empty translation → keep original (coverage safety)
     if not target_text or not target_text.strip():
         # For headers, use source text as fallback (better than nothing)
@@ -360,6 +378,41 @@ def render_translated_pdf_perfect(
             f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"perfect_renderer.py:332","message":"Rendering page","data":{"page_idx":page_idx,"total_blocks":len(page_model.blocks)}})+'\n')
         # #endregion
 
+        # 0) Pre-check: Detect overlapping bounding boxes in source document
+        # This helps identify if overlaps are due to source document issues
+        text_blocks = [b for b in page_model.blocks if b.type == "text"]
+        overlapping_pairs = []
+        for i, block1 in enumerate(text_blocks):
+            for block2 in text_blocks[i+1:]:
+                # Check if bounding boxes overlap
+                bbox1 = block1.bbox
+                bbox2 = block2.bbox
+                # Calculate intersection
+                x_overlap = max(0, min(bbox1.x1, bbox2.x1) - max(bbox1.x0, bbox2.x0))
+                y_overlap = max(0, min(bbox1.y1, bbox2.y1) - max(bbox1.y0, bbox2.y0))
+                if x_overlap > 0 and y_overlap > 0:
+                    overlap_area = x_overlap * y_overlap
+                    area1 = (bbox1.x1 - bbox1.x0) * (bbox1.y1 - bbox1.y0)
+                    area2 = (bbox2.x1 - bbox2.x0) * (bbox2.y1 - bbox2.y0)
+                    iou = overlap_area / (area1 + area2 - overlap_area) if (area1 + area2 - overlap_area) > 0 else 0
+                    if iou > 0.01:  # Significant overlap (IoU > 1%)
+                        overlapping_pairs.append((block1.id, block2.id, iou))
+                        # #region agent log
+                        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                            import json
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"J","location":"perfect_renderer.py:378","message":"Source bbox overlap detected","data":{"block1_id":block1.id,"block2_id":block2.id,"iou":iou,"bbox1":{"x0":bbox1.x0,"y0":bbox1.y0,"x1":bbox1.x1,"y1":bbox1.y1},"bbox2":{"x0":bbox2.x0,"y0":bbox2.y0,"x1":bbox2.x1,"y1":bbox2.y1}}})+'\n')
+                        # #endregion
+                        logger.warning(
+                            f"Page {page_idx+1}: Source blocks {block1.id} and {block2.id} have overlapping bounding boxes "
+                            f"(IoU: {iou:.2%}). This may cause rendering overlaps."
+                        )
+        
+        if overlapping_pairs:
+            logger.warning(
+                f"Page {page_idx+1}: Found {len(overlapping_pairs)} pairs of overlapping source bounding boxes. "
+                f"This is likely causing rendering overlaps."
+            )
+
         # 1) Redact only blocks we will replace
         # CRITICAL: Never touch image blocks - they are preserved automatically
         redacted_any = False
@@ -399,11 +452,14 @@ def render_translated_pdf_perfect(
                 # #endregion
                 continue
 
+            # CRITICAL: Use original bbox WITHOUT padding to prevent overlaps
+            # Padding can cause redactions to overlap with adjacent blocks
+            # Instead, we'll rely on the text insertion to stay within bounds
             rect = fitz.Rect(
-                block.bbox.x0 - cfg.redact_padding,
-                block.bbox.y0 - cfg.redact_padding,
-                block.bbox.x1 + cfg.redact_padding,
-                block.bbox.y1 + cfg.redact_padding,
+                block.bbox.x0,
+                block.bbox.y0,
+                block.bbox.x1,
+                block.bbox.y1,
             )
             page.add_redact_annot(rect, fill=(1, 1, 1))
             redacted_any = True
@@ -500,12 +556,134 @@ def render_translated_pdf_perfect(
 
             base_font, base_size, flags = _get_block_base_style(block)
             font_key = _resolve_font_key(base_font, flags)
-            font = font_mgr.pick(font_key)
+            
+            # Try to pick font with fallback handling
+            try:
+                font = font_mgr.pick(font_key)
+            except Exception as e:
+                logger.warning(f"Font {font_key} not available, using fallback: {e}")
+                # Fallback to standard font based on flags
+                if flags & (2**4):  # Bold
+                    fallback_font = "Times-Bold" if "Times" in base_font else "Helvetica-Bold"
+                elif flags & (2**1):  # Italic
+                    fallback_font = "Times-Italic" if "Times" in base_font else "Helvetica-Oblique"
+                else:
+                    fallback_font = "Times-Roman"
+                font = font_mgr.pick(fallback_font)
             
             # Preserve text color if available
             text_color = preserve_color_from_spans(block)
 
-            rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
+            # CRITICAL: Use original bbox for text insertion to prevent overlaps
+            # The font fitting will ensure text stays within bounds
+            # However, we need to ensure blocks don't overlap with adjacent blocks
+            # Check for nearby blocks and adjust if necessary
+            original_rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
+            
+            # CRITICAL: Ensure rect is valid (not empty or inverted)
+            if original_rect.width <= 0 or original_rect.height <= 0:
+                logger.warning(f"Block {block.id} has invalid bbox: {original_rect}, skipping")
+                continue
+            
+            # CRITICAL: Check for adjacent blocks that might cause overlaps
+            # Strategy: Check against ALL blocks on the page (not just rendered ones) to prevent overlaps
+            # This is especially important for larger PDFs where blocks might be close together
+            safe_rect = fitz.Rect(original_rect.x0, original_rect.y0, original_rect.x1, original_rect.y1)
+            safety_margin = 1.0  # Reduced margin to prevent excessive shrinking (pts)
+            
+            # Sort blocks by position to check nearest neighbors first (more efficient)
+            text_blocks_sorted = sorted(
+                [b for b in page_model.blocks if b.type == "text" and b.id != block.id],
+                key=lambda b: (
+                    abs(b.bbox.y0 - block.bbox.y0) + abs(b.bbox.x0 - block.bbox.x0)
+                )
+            )
+            
+            # Check against nearest text blocks first (more efficient)
+            for other_block_model in text_blocks_sorted[:10]:  # Check only nearest 10 blocks
+                other_rect = fitz.Rect(
+                    other_block_model.bbox.x0, 
+                    other_block_model.bbox.y0, 
+                    other_block_model.bbox.x1, 
+                    other_block_model.bbox.y1
+                )
+                
+                # Check if rectangles actually overlap or are very close
+                x_overlap = min(original_rect.x1, other_rect.x1) - max(original_rect.x0, other_rect.x0)
+                y_overlap = min(original_rect.y1, other_rect.y1) - max(original_rect.y0, other_rect.y0)
+                
+                # Also check if blocks are very close (within safety margin)
+                x_gap = max(0, max(original_rect.x0, other_rect.x0) - min(original_rect.x1, other_rect.x1))
+                y_gap = max(0, max(original_rect.y0, other_rect.y0) - min(original_rect.y1, other_rect.y1))
+                is_very_close = x_gap < safety_margin and y_gap < safety_margin
+                
+                if (x_overlap > 0 and y_overlap > 0) or is_very_close:
+                    # There's actual overlap or blocks are very close - adjust our rectangle
+                    if x_overlap > 0 and y_overlap > 0:
+                        overlap_area = x_overlap * y_overlap
+                        our_area = original_rect.width * original_rect.height
+                        overlap_ratio = overlap_area / our_area if our_area > 0 else 0
+                        
+                        if overlap_ratio > 0.01:  # More than 1% overlap (more sensitive)
+                            # #region agent log
+                            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                                import json
+                                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"L","location":"perfect_renderer.py:620","message":"Detected overlap with block","data":{"block_id":block.id,"other_block_id":other_block_model.id,"overlap_ratio":overlap_ratio,"x_overlap":x_overlap,"y_overlap":y_overlap}})+'\n')
+                            # #endregion
+                            logger.warning(
+                                f"Block {block.id}: Overlaps with block {other_block_model.id} "
+                                f"({overlap_ratio:.1%} overlap). Adjusting rectangle."
+                            )
+                            
+                            # Adjust based on overlap direction and position
+                            if x_overlap > y_overlap:
+                                # Horizontal overlap is larger - adjust horizontally
+                                if original_rect.x0 < other_rect.x0:
+                                    safe_rect.x1 = min(safe_rect.x1, other_rect.x0 - safety_margin)
+                                else:
+                                    safe_rect.x0 = max(safe_rect.x0, other_rect.x1 + safety_margin)
+                            else:
+                                # Vertical overlap is larger - adjust vertically
+                                if original_rect.y0 < other_rect.y0:
+                                    safe_rect.y1 = min(safe_rect.y1, other_rect.y0 - safety_margin)
+                                else:
+                                    safe_rect.y0 = max(safe_rect.y0, other_rect.y1 + safety_margin)
+                    elif is_very_close:
+                        # Blocks are very close - add small margin to prevent edge overlap
+                        if x_gap < safety_margin:
+                            if original_rect.x0 < other_rect.x0:
+                                safe_rect.x1 = min(safe_rect.x1, other_rect.x0 - safety_margin)
+                            else:
+                                safe_rect.x0 = max(safe_rect.x0, other_rect.x1 + safety_margin)
+                        if y_gap < safety_margin:
+                            if original_rect.y0 < other_rect.y0:
+                                safe_rect.y1 = min(safe_rect.y1, other_rect.y0 - safety_margin)
+                            else:
+                                safe_rect.y0 = max(safe_rect.y0, other_rect.y1 + safety_margin)
+            
+            # Ensure safe_rect is still valid after adjustments
+            if safe_rect.width <= 0 or safe_rect.height <= 0:
+                logger.warning(
+                    f"Block {block.id}: Safe rect became invalid after overlap prevention, "
+                    f"using original rect. Original: {original_rect.width:.1f}x{original_rect.height:.1f}"
+                )
+                safe_rect = original_rect
+            
+            # Log if we adjusted the rectangle
+            if safe_rect.x0 != original_rect.x0 or safe_rect.y0 != original_rect.y0 or safe_rect.x1 != original_rect.x1 or safe_rect.y1 != original_rect.y1:
+                # #region agent log
+                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"K","location":"perfect_renderer.py:650","message":"Adjusted rect to prevent overlap","data":{"block_id":block.id,"original":{"x0":original_rect.x0,"y0":original_rect.y0,"x1":original_rect.x1,"y1":original_rect.y1},"safe":{"x0":safe_rect.x0,"y0":safe_rect.y0,"x1":safe_rect.x1,"y1":safe_rect.y1}}})+'\n')
+                # #endregion
+                logger.info(
+                    f"Block {block.id}: Adjusted rectangle to prevent overlap. "
+                    f"Original: {original_rect.width:.1f}x{original_rect.height:.1f}, "
+                    f"Safe: {safe_rect.width:.1f}x{safe_rect.height:.1f}"
+                )
+            
+            rect = safe_rect
+            
             align = _infer_alignment(
                 page_model.width, block.bbox.x0, block.bbox.x1, cfg.align_threshold
             )
@@ -524,11 +702,31 @@ def render_translated_pdf_perfect(
             # #region agent log
             with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
                 import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"E","location":"perfect_renderer.py:667","message":"Font size fitted","data":{"block_id":block.id,"base_size":base_size,"fitted_size":fitted_size,"min_font_size":cfg.min_font_size,"text_length":len(target_text),"rect_width":rect.width,"rect_height":rect.height,"shrink_ratio":fitted_size/base_size if base_size > 0 else 0}})+'\n')
+            # #endregion
+
+            # CRITICAL: Verify the fitted size is reasonable
+            if fitted_size < cfg.min_font_size:
+                logger.warning(
+                    f"Block {block.id}: Fitted font size {fitted_size:.2f} is below minimum "
+                    f"{cfg.min_font_size}, text may be too long for block"
+                )
+                # #region agent log
+                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"E","location":"perfect_renderer.py:680","message":"Font size below minimum","data":{"block_id":block.id,"fitted_size":fitted_size,"min_font_size":cfg.min_font_size}})+'\n')
+                # #endregion
+
+            # #region agent log
+            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
+                import json
                 f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"H","location":"perfect_renderer.py:530","message":"About to render block","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"target_preview":target_text[:50],"font_size":fitted_size}})+'\n')
             # #endregion
 
             try:
-                _try_insert_textbox(
+                # CRITICAL: Verify text fits before inserting
+                # insert_textbox returns negative if text doesn't fit
+                result = _try_insert_textbox(
                     page,
                     rect,
                     target_text,
@@ -539,6 +737,77 @@ def render_translated_pdf_perfect(
                     line_height=cfg.line_height,
                     color=text_color,  # Preserve color if available
                 )
+                
+                # CRITICAL: Check if text actually fit
+                if result < 0:
+                    logger.warning(
+                        f"Block {block.id}: Text overflow detected (result={result:.2f}), "
+                        f"font size {fitted_size:.2f} may be too large. "
+                        f"Text length: {len(target_text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
+                    )
+                    # Try with progressively smaller font sizes
+                    emergency_sizes = [
+                        max(cfg.min_font_size, fitted_size * 0.9),
+                        max(cfg.min_font_size, fitted_size * 0.8),
+                        max(cfg.min_font_size, fitted_size * 0.7),
+                        cfg.min_font_size,
+                    ]
+                    
+                    result = -1
+                    for emergency_size in emergency_sizes:
+                        result = _try_insert_textbox(
+                            page,
+                            rect,
+                            target_text,
+                            fontname=font.name,
+                            fontfile=font.file,
+                            fontsize=emergency_size,
+                            align=align,
+                            line_height=cfg.line_height,
+                            color=text_color,
+                        )
+                        if result >= 0:
+                            logger.info(f"Block {block.id}: Text fits with emergency size {emergency_size:.2f}")
+                            break
+                    
+                    if result < 0:
+                        # Last resort: intelligently truncate text
+                        logger.error(
+                            f"Block {block.id}: Text still doesn't fit even with minimum size {cfg.min_font_size:.2f}. "
+                            f"Intelligently truncating text to prevent overflow."
+                        )
+                        # Estimate max chars that fit (conservative estimate)
+                        chars_per_line = max(1, int(rect.width / (cfg.min_font_size * 0.5)))
+                        max_lines = max(1, int(rect.height / (cfg.min_font_size * cfg.line_height)))
+                        max_chars = chars_per_line * max_lines
+                        
+                        if len(target_text) > max_chars:
+                            # Try to truncate at word boundary
+                            truncated = target_text[:max_chars]
+                            last_space = truncated.rfind(' ')
+                            if last_space > max_chars * 0.8:  # If we can find a space near the end
+                                target_text = truncated[:last_space] + "..."
+                            else:
+                                target_text = truncated + "..."
+                        
+                        # Final attempt with truncated text
+                        result = _try_insert_textbox(
+                            page,
+                            rect,
+                            target_text,
+                            fontname=font.name,
+                            fontfile=font.file,
+                            fontsize=cfg.min_font_size,
+                            align=align,
+                            line_height=cfg.line_height,
+                            color=text_color,
+                        )
+                        if result < 0:
+                            logger.error(
+                                f"Block {block.id}: CRITICAL - Text still doesn't fit after truncation. "
+                                f"Block may be too small or text too long. Rendering what we can."
+                            )
+                
                 rendered_block_ids.append(block.id)
                 # #region agent log
                 with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:

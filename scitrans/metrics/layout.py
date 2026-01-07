@@ -17,8 +17,11 @@ def _iou(a: fitz.Rect, b: fitz.Rect) -> float:
     inter = a & b
     if inter.is_empty:
         return 0.0
-    inter_area = inter.get_area()
-    union_area = a.get_area() + b.get_area() - inter_area
+    # PyMuPDF Rect doesn't have get_area(), use width * height instead
+    inter_area = inter.width * inter.height
+    a_area = a.width * a.height
+    b_area = b.width * b.height
+    union_area = a_area + b_area - inter_area
     return 0.0 if union_area <= 0 else inter_area / union_area
 
 

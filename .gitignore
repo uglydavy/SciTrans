@@ -37,8 +37,6 @@ dist/
 # Outputs
 outputs/
 previews/
-test_input.pdf
-test_output*.pdf
 test*.pdf
 debug*.pdf
 quick_test*.pdf

@@ -45,21 +45,42 @@ class GoogleTranslateBackend:
         start = time.time()
 
         try:
-            if self._use_deep_translator:
-                # deep-translator API
-                translated = self._translator.translate(
-                    req.text,
-                    source=req.source_lang,
-                    target=req.target_lang,
-                )
+            # Use threading timeout for cross-platform support (30 seconds max)
+            import threading
+            translated_result = [None]
+            exception_result = [None]
+            
+            def translate_worker():
+                try:
+                    if self._use_deep_translator:
+                        # deep-translator API
+                        translated_result[0] = self._translator.translate(
+                            req.text,
+                            source=req.source_lang,
+                            target=req.target_lang,
+                        )
+                    else:
+                        # googletrans API
+                        result = self._translator.translate(
+                            req.text,
+                            src=req.source_lang,
+                            dest=req.target_lang,
+                        )
+                        translated_result[0] = result.text if result and result.text else ""
+                except Exception as e:
+                    exception_result[0] = e
+            
+            thread = threading.Thread(target=translate_worker, daemon=True)
+            thread.start()
+            thread.join(timeout=30.0)  # 30 second timeout
+            
+            if thread.is_alive():
+                # Timeout - return empty
+                translated = ""
+            elif exception_result[0]:
+                raise exception_result[0]
             else:
-                # googletrans API
-                result = self._translator.translate(
-                    req.text,
-                    src=req.source_lang,
-                    dest=req.target_lang,
-                )
-                translated = result.text if result and result.text else ""
+                translated = translated_result[0] if translated_result[0] else ""
         except Exception as e:
             # Fallback: return empty on error
             translated = ""

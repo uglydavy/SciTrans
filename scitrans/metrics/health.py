@@ -142,6 +142,7 @@ def compute_page_health(health_scores: list[BlockHealthScore]) -> dict:
             "warning_blocks": 0,
             "failed_blocks": 0,
             "mean_score": 1.0,
+            "health_ratio": 1.0,
         }
 
     ok_count = sum(1 for h in health_scores if h.status == "ok")

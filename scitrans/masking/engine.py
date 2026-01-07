@@ -33,6 +33,18 @@ def default_rules() -> list[MaskRule]:
             MaskRule(
                 "MATH_INLINE", re.compile(r"\$(?!\$)([^$\n]*?)\$|\\\(.*?\\\)", re.DOTALL), priority=70
             ),
+            # Person names (more specific patterns to avoid false positives)
+            # Matches: "John Smith", "Tchienkoua Franck Davy", "Ouedraogo T. Rachid Hérlot"
+            # Pattern: 2-4 capitalized words, optionally with middle initial
+            # Excludes common words that start with capital (like "The", "This", etc.)
+            # Also matches names with ID numbers: "Name / ID: 123456"
+            MaskRule("PERSON_NAME", re.compile(r"\b(?:[A-Z][a-z]{2,}(?:\s+[A-Z]\.)?\s+){1,2}[A-Z][a-z]{2,}(?:\s*/\s*ID\s*:\s*\d+)?\b"), priority=68),
+            # Place names (capitalized, often with common place suffixes)
+            MaskRule("PLACE_NAME", re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:City|State|Country|University|Institute|Laboratory|Center|Centre|Hospital|School|College))\b"), priority=67),
+            # Table of contents entries (numbered sections)
+            MaskRule("TOC_ENTRY", re.compile(r"^\s*\d+\.\d*(?:\s+\d+\.\d*)*\s+[A-Z].*$", re.MULTILINE), priority=66),
+            # Figure/Table captions
+            MaskRule("FIGURE_CAPTION", re.compile(r"\b(?:Figure|Fig\.|Table|Tab\.)\s+\d+[:\s]+.*", re.IGNORECASE), priority=65),
             # Bullet points - preserve exactly (CRITICAL for perfect rendering)
             MaskRule("BULLET", re.compile(r"^([•\-\*·▪▫])\s+", re.MULTILINE), priority=65),
             # URLs & emails
@@ -91,8 +103,28 @@ class MaskingEngine:
         # Use advanced math detection if available and block is provided
         if self.use_advanced_math and self.advanced_math and block:
             # First, mask math using span-level analysis (catches math without delimiters)
+            # The advanced math detector uses {num} format, so we construct it from our format
+            # Our format is "<<{kind}_{num:04d}>>", so we replace {kind} with "MATH" and keep {num:04d}
+            if "{kind}" in self.placeholder_fmt:
+                # Format has {kind} placeholder - replace it with "MATH"
+                math_placeholder_fmt = self.placeholder_fmt.replace("{kind}", "MATH")
+            else:
+                # Format doesn't have {kind} - construct it manually
+                # Extract the base format (e.g., "<<{num:04d}>>") and add "MATH_"
+                base_fmt = self.placeholder_fmt
+                if base_fmt.startswith("<<") and base_fmt.endswith(">>"):
+                    inner = base_fmt[2:-2]  # Remove << and >>
+                    if "{num" in inner:
+                        # Replace {num:04d} with MATH_{num:04d}
+                        math_placeholder_fmt = f"<<MATH_{inner}>>"
+                    else:
+                        math_placeholder_fmt = f"<<MATH_{inner}>>"
+                else:
+                    # Fallback: use default format
+                    math_placeholder_fmt = "<<MATH_{num:04d}>>"
+            
             math_masked, math_registry = self.advanced_math.mask_math_in_text(
-                masked, block, placeholder_fmt="<<MATH_{num:04d}>>"
+                masked, block, placeholder_fmt=math_placeholder_fmt
             )
             masked = math_masked
             registry.update(math_registry)

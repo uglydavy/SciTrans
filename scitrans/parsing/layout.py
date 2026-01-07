@@ -96,8 +96,14 @@ def is_table_candidate(block: Block) -> bool:
     3. Numeric patterns in cells
     4. Alignment patterns
     5. Consistent column structure
+    
+    CRITICAL: Exclude headers/titles from table detection
     """
     if block.type != "text":
+        return False
+
+    # CRITICAL: Never mark headers/titles as tables
+    if block.meta.get("is_header") or block.meta.get("block_type") in ("title", "header", "subheader"):
         return False
 
     text = "".join(sp.text for ln in block.lines for sp in ln.spans)
@@ -108,13 +114,17 @@ def is_table_candidate(block: Block) -> bool:
     if "|" in text or "\t" in text:
         return True
 
-    # Signal 2: Numeric density
+    # Signal 2: Numeric density (but need multiple lines for table)
+    lines = text.split('\n')
+    if len(lines) < 2:  # Single line is unlikely to be a table
+        return False
+    
     digits = sum(1 for c in text if c.isdigit())
     if digits > 0 and digits / max(len(text), 1) > 0.25:
         return True
 
-    # Signal 3: Repeated double-spaces (column-like)
-    if "  " in text:
+    # Signal 3: Repeated double-spaces (column-like) - but need multiple lines
+    if "  " in text and len(lines) >= 2:
         return True
 
     return False
