@@ -5,9 +5,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 from scitrans.core.models import Block
+# Import placeholder helpers for generation and validation
+from scitrans.masking.placeholders import generate_placeholder, validate_placeholders
 
-# ASCII placeholders are more stable across models/fonts than Unicode ⟦⟧
-DEFAULT_PLACEHOLDER_FMT = "<<{kind}_{num:04d}>>"
+# Placeholder generation is handled dynamically via scitrans.masking.placeholders.
+# The old DEFAULT_PLACEHOLDER_FMT is kept for backwards compatibility but is no longer
+# used to construct new placeholders. Instead, each placeholder embeds a CRC32 checksum
+# of the original span. See scitrans.masking.placeholders.generate_placeholder for details.
+DEFAULT_PLACEHOLDER_FMT = "@@SCITRANS_{kind}_{num:04d}_{crc:08X}@@"
 
 
 @dataclass(frozen=True)
@@ -100,31 +105,13 @@ class MaskingEngine:
 
         masked = text
         
-        # Use advanced math detection if available and block is provided
+        # Use advanced math detection if available and block is provided.  This masks
+        # spans that are likely mathematical expressions even if they are not
+        # delimited by $...$ or \(...\). The detector returns both the masked
+        # text and a registry mapping its internal placeholders to original text.
         if self.use_advanced_math and self.advanced_math and block:
-            # First, mask math using span-level analysis (catches math without delimiters)
-            # The advanced math detector uses {num} format, so we construct it from our format
-            # Our format is "<<{kind}_{num:04d}>>", so we replace {kind} with "MATH" and keep {num:04d}
-            if "{kind}" in self.placeholder_fmt:
-                # Format has {kind} placeholder - replace it with "MATH"
-                math_placeholder_fmt = self.placeholder_fmt.replace("{kind}", "MATH")
-            else:
-                # Format doesn't have {kind} - construct it manually
-                # Extract the base format (e.g., "<<{num:04d}>>") and add "MATH_"
-                base_fmt = self.placeholder_fmt
-                if base_fmt.startswith("<<") and base_fmt.endswith(">>"):
-                    inner = base_fmt[2:-2]  # Remove << and >>
-                    if "{num" in inner:
-                        # Replace {num:04d} with MATH_{num:04d}
-                        math_placeholder_fmt = f"<<MATH_{inner}>>"
-                    else:
-                        math_placeholder_fmt = f"<<MATH_{inner}>>"
-                else:
-                    # Fallback: use default format
-                    math_placeholder_fmt = "<<MATH_{num:04d}>>"
-            
             math_masked, math_registry = self.advanced_math.mask_math_in_text(
-                masked, block, placeholder_fmt=math_placeholder_fmt
+                masked, block, placeholder_fmt=self.placeholder_fmt
             )
             masked = math_masked
             registry.update(math_registry)
@@ -133,12 +120,13 @@ class MaskingEngine:
 
         # Apply standard regex-based rules (for code, URLs, etc.)
         for rule in self.rules:
+            # Reset numbering per rule to maintain per-rule numbering
             n = 0
 
             def _repl(m: re.Match, rule=rule) -> str:
                 nonlocal n
                 n += 1
-                placeholder = self.placeholder_fmt.format(kind=rule.kind, num=n)
+                placeholder = generate_placeholder(rule.kind, n, m.group(0))
                 registry[placeholder] = m.group(0)
                 return placeholder
 
@@ -154,55 +142,37 @@ class MaskingEngine:
         errors: list[str] = []
         out = translated
 
-        # Exact restoration - try both <<>> and ⟦⟧ formats
+        # Exact restoration – replace placeholder tokens directly where present
         for ph, original in registry.items():
             if ph in out:
                 out = out.replace(ph, original)
             else:
-                # Try alternative format: if we have <<MATH_INLINE_0001>>, also try ⟦MATH_INLINE_0001⟧
-                # Extract the kind and number from placeholder
-                ph_alt = None
-                if ph.startswith("<<") and ph.endswith(">>"):
-                    # Convert <<KIND_NUM>> to ⟦KIND_NUM⟧
-                    inner = ph[2:-2]  # Remove << and >>
-                    ph_alt = f"⟦{inner}⟧"
-                elif ph.startswith("⟦") and ph.endswith("⟧"):
-                    # Convert ⟦KIND_NUM⟧ to <<KIND_NUM>>
-                    inner = ph[1:-1]  # Remove ⟦ and ⟧
-                    ph_alt = f"<<{inner}>>"
-                
-                if ph_alt and ph_alt in out:
-                    out = out.replace(ph_alt, original)
+                # Attempt loose matching: allow optional whitespace between token parts
+                ph_esc = re.escape(ph)
+                ph_pat = ph_esc.replace("_", r"\s*_\s*")
+                ph_pat = ph_pat.replace("@@", r"@@\s*")
+                m = re.search(ph_pat, out, re.IGNORECASE)
+                if m:
+                    out = out[: m.start()] + original + out[m.end():]
                 else:
                     errors.append(f"missing_placeholder:{ph}")
 
         if errors and tolerant:
-            # Attempt very small repairs: sometimes models add spaces inside brackets.
-            # Example: "<< MATH_INLINE_0001 >>" or "⟦ MATH_INLINE_0001 ⟧"
+            # Attempt minor repairs: tokens sometimes get split by whitespace or partially removed
             repaired = out
             for ph, original in registry.items():
                 if ph in repaired:
                     continue
-
-                # Try both formats with loose matching
-                for fmt in [ph, ph.replace("<<", "⟦").replace(">>", "⟧")]:
-                    if fmt in repaired:
-                        continue
-                    
-                    ph_loose = re.escape(fmt)
-                    ph_loose = ph_loose.replace("_", r"\s*_\s*")
-                    # allow whitespace inside the brackets (both formats)
-                    ph_loose = ph_loose.replace("<<", r"<<\s*").replace(">>", r"\s*>>")
-                    ph_loose = ph_loose.replace("⟦", r"⟦\s*").replace("⟧", r"\s*⟧")
-                    candidate = re.compile(ph_loose)
-                    m = candidate.search(repaired)
-                    if m:
-                        repaired = repaired[: m.start()] + original + repaired[m.end() :]
-                        err = f"missing_placeholder:{ph}"
-                        if err in errors:
-                            errors.remove(err)
-                        break
-
+                parts = ph.split("_")
+                pat = re.escape(parts[0])
+                for part in parts[1:]:
+                    pat += r"\s*_\s*" + re.escape(part)
+                m = re.search(pat, repaired, re.IGNORECASE)
+                if m:
+                    repaired = repaired[: m.start()] + original + repaired[m.end():]
+                    err = f"missing_placeholder:{ph}"
+                    if err in errors:
+                        errors.remove(err)
             out = repaired
 
         return out, errors

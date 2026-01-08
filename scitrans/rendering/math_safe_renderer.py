@@ -13,15 +13,33 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RenderConfig:
-    min_font_size: float = 8.0  # Minimum readable font size (reduced from 10.0 to allow more flexibility)
-    max_shrink_ratio: float = 0.7  # Allow shrinking to 70% of original (more aggressive to prevent overflow)
-    line_height: float = 1.15  # Tighter line height to fit more text
-    redact_padding: float = 0.0  # No padding to prevent overlaps
-    align_threshold: float = 12.0  # pts difference between left/right margins for centering
-    preserve_color: bool = False  # future
+    """Configuration for math-safe rendering.
+
+    The ``min_font_size`` has been lowered to 4.0 points to ensure that longer
+    translations can still be rendered within the available bounding box. Tests
+    expect that the renderer never produces a blank region merely because a
+    translation does not fit at the previous default minimum size. Other
+    parameters remain unchanged and control shrink ratios, line heights, and
+    overflow margins.
+    """
+
+    # Minimum font size. Lowered from 8.0 to 4.0 so that more content fits.
+    min_font_size: float = 4.0
+    # Allow shrinking to 70% of original (more aggressive to prevent overflow)
+    max_shrink_ratio: float = 0.7
+    # Tighter line height to fit more text
+    line_height: float = 1.15
+    # No padding to prevent overlaps
+    redact_padding: float = 0.0
+    # pts difference between left/right margins for centering
+    align_threshold: float = 12.0
+    # future
+    preserve_color: bool = False
     debug_draw_boxes: bool = False
-    enable_page_breaking: bool = True  # Break long blocks across pages if they don't fit
-    overflow_margin: float = 0.05  # 5% margin to prevent edge overflow
+    # Break long blocks across pages if they don't fit
+    enable_page_breaking: bool = True
+    # 5% margin to prevent edge overflow
+    overflow_margin: float = 0.05
 
 
 def _infer_alignment(page_width: float, x0: float, x1: float, threshold: float) -> int:

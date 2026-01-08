@@ -116,15 +116,21 @@ def is_table_candidate(block: Block) -> bool:
 
     # Signal 2: Numeric density (but need multiple lines for table)
     lines = text.split('\n')
-    if len(lines) < 2:  # Single line is unlikely to be a table
+    # Allow single-line tables if they appear columnar: contain double spaces and at least three columns
+    if len(lines) < 2:
+        # Treat as a table when there are double spaces separating 3 or more chunks
+        if "  " in text:
+            parts = [p for p in text.split() if p]
+            if len(parts) >= 3:
+                return True
         return False
-    
+
     digits = sum(1 for c in text if c.isdigit())
     if digits > 0 and digits / max(len(text), 1) > 0.25:
         return True
 
-    # Signal 3: Repeated double-spaces (column-like) - but need multiple lines
-    if "  " in text and len(lines) >= 2:
+    # Signal 3: Repeated double-spaces (column-like)
+    if "  " in text:
         return True
 
     return False
