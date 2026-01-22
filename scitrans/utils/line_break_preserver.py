@@ -9,7 +9,6 @@ import them without failure.
 
 from __future__ import annotations
 
-from typing import Any
 
 
 def preserve_line_breaks(text: str) -> str:

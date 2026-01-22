@@ -2,10 +2,12 @@
 
 PHASE 1: Multi-column detection, paragraph merging, header/footer detection
 PHASE 3: Table heuristics, caption grouping, improved overlap handling
+PHASE 4: Enhanced block classification and tagging
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from scitrans.core.models import BBox, Block
@@ -97,7 +99,7 @@ def is_table_candidate(block: Block) -> bool:
     4. Alignment patterns
     5. Consistent column structure
     
-    CRITICAL: Exclude headers/titles from table detection
+    CRITICAL: Exclude headers/titles from table detection to avoid false positives
     """
     if block.type != "text":
         return False
@@ -110,28 +112,62 @@ def is_table_candidate(block: Block) -> bool:
     if not text.strip():
         return False
 
-    # Signal 1: Pipes or tabs
+    lines = text.split('\n')
+    
+    # Exclude short single-line text that looks like section titles/headers
+    if len(lines) == 1 and len(text) < 100:
+        # Check if it contains common section title keywords
+        section_keywords = ["Section", "Chapter", "Introduction", "Methodology", 
+                           "Results", "Conclusion", "Abstract", "Summary",
+                           "Discussion", "Background", "Related Work"]
+        if any(keyword in text for keyword in section_keywords):
+            return False
+        
+        # Check if it looks like a title (ends with colon, short, capitalized)
+        if text.strip().endswith(':') and len(text.strip()) < 50:
+            return False
+    
+    # Strong signals for tables (very reliable)
     if "|" in text or "\t" in text:
         return True
 
-    # Signal 2: Numeric density (but need multiple lines for table)
-    lines = text.split('\n')
-    # Allow single-line tables if they appear columnar: contain double spaces and at least three columns
+    # For single-line blocks: require STRONG evidence
     if len(lines) < 2:
-        # Treat as a table when there are double spaces separating 3 or more chunks
+        # Must have both double spaces AND sufficient numeric values
         if "  " in text:
-            parts = [p for p in text.split() if p]
-            if len(parts) >= 3:
-                return True
+            parts = text.split()
+            numeric_parts = [p for p in parts if any(c.isdigit() for c in p)]
+            
+            # Increased threshold from 3 to 4 numeric values
+            if len(numeric_parts) >= 4:
+                # Additional validation: check for consistent spacing (table-like structure)
+                import re
+                double_spaces = re.findall(r'  +', text)
+                # Must have at least 2 double-space separators for table-like structure
+                if len(double_spaces) >= 2:
+                    # Check that spacing is relatively consistent
+                    space_lengths = [len(s) for s in double_spaces]
+                    if max(space_lengths) <= min(space_lengths) * 3:  # Not too variable
+                        return True
+        
+        # Single-line without strong evidence = not a table
         return False
 
+    # For multi-line blocks: check for table-like structure
+    # Signal 1: High numeric density (more conservative threshold)
     digits = sum(1 for c in text if c.isdigit())
-    if digits > 0 and digits / max(len(text), 1) > 0.25:
-        return True
+    if digits > 0:
+        numeric_density = digits / max(len(text), 1)
+        # Increased threshold from 0.25 to 0.30 to reduce false positives
+        if numeric_density > 0.30:
+            return True
 
-    # Signal 3: Repeated double-spaces (column-like)
+    # Signal 2: Repeated double-spaces in multiple lines (column structure)
     if "  " in text:
-        return True
+        lines_with_double_spaces = [line for line in lines if "  " in line]
+        # At least 50% of lines should have double spaces for a table
+        if len(lines_with_double_spaces) >= len(lines) * 0.5:
+            return True
 
     return False
 
@@ -316,3 +352,71 @@ def detect_headers_footers(
             body.append(block)
 
     return headers, body, footers
+
+
+def _get_avg_font_size(block: Block) -> float:
+    """Calculate average font size for a block."""
+    if not block.lines:
+        return 12.0  # Default
+    
+    sizes = []
+    for line in block.lines:
+        for span in line.spans:
+            if span.style and span.style.size and span.style.size > 0:
+                sizes.append(float(span.style.size))
+    
+    return sum(sizes) / len(sizes) if sizes else 12.0
+
+
+def _get_block_text(block: Block) -> str:
+    """Extract text from block."""
+    lines = []
+    for line in block.lines:
+        line_text = "".join(span.text for span in line.spans)
+        lines.append(line_text)
+    return "\n".join(lines).strip()
+
+
+def classify_block_type(block: Block) -> str:
+    """Classify block as title, header, subheader, paragraph, list_item, etc.
+    
+    PHASE 4.1: Enhanced block classification using:
+    - Font size analysis
+    - Content pattern matching
+    - Position heuristics
+    - Text length analysis
+    
+    Args:
+        block: Block to classify
+        
+    Returns:
+        Block type: "title", "header", "subheader", "paragraph", "list_item"
+    """
+    # Check font size
+    avg_font_size = _get_avg_font_size(block)
+    
+    # Check content patterns
+    text = _get_block_text(block)
+    text_lower = text.lower().strip()
+    text_len = len(text)
+    
+    # Title: Large font (>= 16pt), short text, centered or at top
+    if avg_font_size >= 16.0 and text_len < 100:
+        return "title"
+    
+    # Header: Medium-large font (>= 14pt) OR starts with section pattern
+    section_pattern = r'^(section|chapter|part|chapitre|partie|\d+\.)\s+'
+    if avg_font_size >= 14.0 or re.match(section_pattern, text_lower):
+        return "header"
+    
+    # Subheader: Medium font (>= 12pt), short text
+    if avg_font_size >= 12.0 and text_len < 150:
+        return "subheader"
+    
+    # List item: Starts with bullet or number
+    list_pattern = r'^[•\-\*·]|^\d+[.)]\s+'
+    if re.match(list_pattern, text):
+        return "list_item"
+    
+    # Default: paragraph
+    return "paragraph"

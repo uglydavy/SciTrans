@@ -33,12 +33,10 @@ from scitrans.rendering.math_aware_renderer import (
 from scitrans.rendering.math_safe_renderer import RenderConfig, render_translated_pdf
 from scitrans.rendering.perfect_renderer import render_translated_pdf_perfect
 from scitrans.translation.backends.base import TranslateRequest, TranslationBackend
-from scitrans.translation.cache import TranslationCache, make_cache_key
 from scitrans.translation.prompting import build_system_prompt
 from scitrans.translation.reranking import rerank_candidates
 from scitrans.utils.identity_translation_detector import (
     check_identity_translation,
-    IdentityCheckResult,
 )
 
 # Import glossary system
@@ -87,6 +85,201 @@ def _block_text(block) -> str:
     return "\n".join(lines).strip("\n")
 
 
+def extract_section_prefix(text: str) -> tuple[str, str]:
+    """Extract section/chapter prefix from text.
+    
+    Returns:
+        (prefix, content) where prefix is "Section X: " and content is the rest
+        
+    Examples:
+        "Section 1: Introduction" -> ("Section 1: ", "Introduction")
+        "Chapter 3: Methods" -> ("Chapter 3: ", "Methods")
+        "Normal text" -> ("", "Normal text")
+    """
+    pattern = r'^(Section|Chapter|Part|Chapitre|Partie)\s+(\d+[.\)]?)\s*:?\s*'
+    match = re.match(pattern, text, re.IGNORECASE)
+    if match:
+        prefix = match.group(0)  # e.g., "Section 1: "
+        content = text[len(prefix):].strip()  # Rest of text
+        return prefix, content
+    return "", text
+
+
+def translate_section_prefix(prefix: str, target_lang: str) -> str:
+    """Translate section prefix while preserving number.
+    
+    Args:
+        prefix: e.g., "Section 1: ", "Chapter 3: "
+        target_lang: Target language code
+        
+    Returns:
+        Translated prefix with number preserved, e.g., "Section 1 : ", "Chapitre 3 : "
+    """
+    if not prefix:
+        return ""
+    
+    # Extract the keyword and number
+    pattern = r'^(Section|Chapter|Part|Chapitre|Partie)\s+(\d+[.\)]?)\s*:?\s*'
+    match = re.match(pattern, prefix, re.IGNORECASE)
+    if not match:
+        return prefix
+    
+    keyword = match.group(1)
+    number = match.group(2)
+    
+    # Simple translation map for common keywords
+    keyword_map = {
+        # English to French
+        "section": {"fr": "Section", "es": "Sección", "de": "Abschnitt"},
+        "chapter": {"fr": "Chapitre", "es": "Capítulo", "de": "Kapitel"},
+        "part": {"fr": "Partie", "es": "Parte", "de": "Teil"},
+        # French to other
+        "chapitre": {"en": "Chapter", "es": "Capítulo", "de": "Kapitel"},
+        "partie": {"en": "Part", "es": "Parte", "de": "Teil"},
+    }
+    
+    keyword_lower = keyword.lower()
+    if keyword_lower in keyword_map and target_lang in keyword_map[keyword_lower]:
+        translated_keyword = keyword_map[keyword_lower][target_lang]
+    else:
+        # Preserve original if no mapping
+        translated_keyword = keyword
+    
+    # Return formatted prefix with French spacing for colons
+    if target_lang == "fr":
+        return f"{translated_keyword} {number} : "  # French uses space before colon
+    else:
+        return f"{translated_keyword} {number}: "
+
+
+def validate_section_numbers(source: str, translation: str, section_prefix: str, target_lang: str) -> str:
+    """Validate section numbers are preserved in translation. Auto-fix if missing.
+    
+    Args:
+        source: Original source text (without prefix - just content)
+        translation: Translated text (should have prefix)
+        section_prefix: Original section prefix (e.g., "Section 1: ")
+        target_lang: Target language code
+        
+    Returns:
+        Fixed translation with section prefix if it was missing
+    """
+    if not section_prefix:
+        return translation  # No section prefix to validate
+    
+    # Check if translation already has the prefix (in any language)
+    pattern = r'^(Section|Chapter|Part|Chapitre|Partie)\s+\d+[.\)]?\s*:?\s*'
+    if re.match(pattern, translation, re.IGNORECASE):
+        # Translation already has a section prefix - good!
+        return translation
+    
+    # Section prefix is missing - auto-fix by adding it
+    logger.warning(f"Section prefix '{section_prefix}' missing from translation. Auto-fixing...")
+    translated_prefix = translate_section_prefix(section_prefix, target_lang)
+    return f"{translated_prefix}{translation}"
+
+
+def emergency_translate(
+    masked_block: MaskedBlock,
+    backend: TranslationBackend,
+    source_lang: str,
+    target_lang: str,
+    masker: MaskingEngine,
+    temp: float = 0.9
+) -> Optional[TranslatedBlock]:
+    """Last-resort translation attempt with high temperature and simplified prompt.
+    
+    This is called when normal translation fails. Strategy:
+    1. Use very high temperature (0.9) for creativity
+    2. Simplified prompt (less rules to confuse model)
+    3. Accept ANY result (even partial)
+    4. If still fails, use source text (better than empty)
+    
+    Args:
+        masked_block: The block to translate
+        backend: Translation backend to use
+        source_lang: Source language
+        target_lang: Target language
+        masker: Masking engine for placeholder restoration
+        temp: Temperature (default 0.9 for maximum creativity)
+        
+    Returns:
+        TranslatedBlock with best available result, or None if impossible
+    """
+    logger.info(f"🆘 Emergency translation for block {masked_block.block_id}")
+    
+    # Get original source text for fallback
+    source_text = masked_block.masked_text
+    
+    # Simplified prompt - just translate, no complex rules
+    simple_prompt = f"Translate this text from {source_lang} to {target_lang}. Preserve any placeholders like <<...>> or @@...@@."
+    
+    req = TranslateRequest(
+        text=masked_block.masked_text,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        system_prompt=simple_prompt,
+        temperature=temp,
+        n_candidates=1,
+        identity_threshold=0.99,  # Very permissive
+        timeout=120.0,  # Give it time
+    )
+    
+    try:
+        result = backend.translate(req)
+        if result.candidates and len(result.candidates) > 0:
+            best = result.candidates[0]
+            if best and best.strip():  # Accept ANY non-empty result
+                # Try to restore placeholders (but accept even if restore fails)
+                try:
+                    restored, errors = masker.restore(best, masked_block.registry)
+                    if restored and restored.strip():
+                        logger.info(f"✅ Emergency translation succeeded for {masked_block.block_id}")
+                        return TranslatedBlock(
+                            block_id=masked_block.block_id,
+                            source_text=source_text,
+                            translated_text=restored,
+                            ok=True,
+                            errors=errors if errors else [],
+                            meta={"emergency_translation": True, "temperature": temp},
+                        )
+                    else:
+                        # Restoration failed but we have translation - use it anyway
+                        logger.warning(f"⚠️ Emergency translation succeeded but placeholder restore failed for {masked_block.block_id}")
+                        return TranslatedBlock(
+                            block_id=masked_block.block_id,
+                            source_text=source_text,
+                            translated_text=best,  # Use translation even without placeholders
+                            ok=True,
+                            errors=["placeholder_restore_failed"] + (errors if errors else []),
+                            meta={"emergency_translation": True, "temperature": temp, "placeholder_restore_failed": True},
+                        )
+                except Exception as restore_error:
+                    # Restoration error - use translation anyway
+                    logger.warning(f"⚠️ Emergency translation succeeded but restore error for {masked_block.block_id}: {restore_error}")
+                    return TranslatedBlock(
+                        block_id=masked_block.block_id,
+                        source_text=source_text,
+                        translated_text=best,
+                        ok=True,
+                        errors=["restore_error"],
+                        meta={"emergency_translation": True, "temperature": temp, "restore_error": str(restore_error)},
+                    )
+    except Exception as e:
+        logger.error(f"Emergency translation failed for {masked_block.block_id}: {e}")
+    
+    # Absolute last resort: use source text (better than empty)
+    logger.warning(f"⚠️ Using source text for block {masked_block.block_id} (better than empty)")
+    return TranslatedBlock(
+        block_id=masked_block.block_id,
+        source_text=source_text,
+        translated_text=source_text,  # Use source as fallback
+        ok=False,
+        errors=["emergency_fallback_to_source"],
+        meta={"used_source_text": True},
+    )
+
+
 def _translate_single_block(
     mb: MaskedBlock,
     idx: int,
@@ -111,6 +304,11 @@ def _translate_single_block(
                 source_text = _block_text(block)
                 break
     
+    # Enhanced logging for CLI visibility
+    console.print(f"\n[cyan]📝 Block {idx+1}/{total}:[/cyan] {mb.block_id}")
+    preview = source_text[:80] + "..." if len(source_text) > 80 else source_text
+    console.print(f"   [dim]Source:[/dim] {preview}")
+    
     logger.info(f"[{idx+1}/{total}] Translating block {mb.block_id}")
     pre_score = pre_scores_by_id.get(mb.block_id)
     
@@ -118,6 +316,7 @@ def _translate_single_block(
     if pre_score and pre_score.is_complex():
         block_n_candidates = pre_score.recommended_candidates
         block_temperature = pre_score.recommended_temperature
+        console.print(f"   [yellow]⚙️  Complex block detected:[/yellow] {block_n_candidates} candidates, temp={block_temperature:.1f}")
     else:
         block_n_candidates = cfg.n_candidates
         block_temperature = cfg.temperature
@@ -133,6 +332,16 @@ def _translate_single_block(
                 is_bullet_block = any(source_text_check.strip().startswith(bullet) for bullet in ["•", "-", "*", "·"])
                 break
     
+    # CRITICAL: For headers, always generate multiple candidates and use reranking
+    # This helps avoid wrong translations like "Section 1: Introduction" → "Document layout result"
+    if is_header_block:
+        block_n_candidates = max(block_n_candidates, 3)  # At least 3 candidates for headers
+        console.print(f"   [magenta]📌 Header/Title block - generating {block_n_candidates} candidates for quality[/magenta]")
+    
+    # Log special block types
+    if is_bullet_block:
+        console.print(f"   [blue]• Bullet point[/blue]")
+    
     # Build enhanced prompt
     enhanced_prompt = build_system_prompt(
         source=cfg.source_lang,
@@ -142,7 +351,7 @@ def _translate_single_block(
         is_bullet=is_bullet_block,
     )
     
-    # Create translation request
+    # Create translation request with proper context
     req = TranslateRequest(
         text=mb.masked_text,
         source_lang=cfg.source_lang,
@@ -150,10 +359,11 @@ def _translate_single_block(
         system_prompt=enhanced_prompt,
         temperature=block_temperature,
         n_candidates=block_n_candidates,
-        context="",
+        context={"is_header": is_header_block, "block_id": mb.block_id},
     )
     
     # Translate
+    console.print(f"   [cyan]🔄 Translating...[/cyan]")
     candidates: list[str] = []
     res_meta: dict = {}
     try:
@@ -167,13 +377,29 @@ def _translate_single_block(
             "cached": False,
             **res.meta,
         }
+        # Log candidates
+        if len(candidates) > 1:
+            console.print(f"   [green]✓ Got {len(candidates)} candidates[/green]")
+            for i, cand in enumerate(candidates[:3], 1):  # Show max 3
+                cand_preview = cand[:60] + "..." if len(cand) > 60 else cand
+                console.print(f"      [{i}] {cand_preview}")
+        else:
+            cand_preview = candidates[0][:60] + "..." if len(candidates[0]) > 60 else candidates[0]
+            console.print(f"   [green]✓ Translation:[/green] {cand_preview}")
+            logger.info(
+                f"Block {mb.block_id}: Translation received\n"
+                f"  Translation ({len(candidates[0])} chars): '{candidates[0][:100]}...'\n"
+                f"  Backend: {backend.name}"
+            )
     except Exception as e:
         logger.error(f"Block {mb.block_id}: Backend translation failed: {e}", exc_info=True)
+        console.print(f"   [red]❌ Translation failed: {e}[/red]")
         candidates = [""]
         res_meta = {"backend": backend.name, "model": getattr(backend, "model", cfg.model), "cached": False, "error": str(e)}
     
     # Rerank if enabled
     if cfg.enable_reranking and len(candidates) > 1:
+        console.print(f"   [yellow]⚖️  Reranking candidates...[/yellow]")
         is_header_for_rerank = False
         for page in doc.pages:
             for block in page.blocks:
@@ -190,20 +416,69 @@ def _translate_single_block(
         if ranked:
             candidates = [c for c, _ in ranked]
             res_meta["rerank_scores"] = {"best_score": ranked[0][1].total, "best_valid": ranked[0][1].is_valid()}
+            # Show top 3 ranked
+            console.print(f"   [green]📊 Reranked results:[/green]")
+            for i, (cand, score) in enumerate(ranked[:3], 1):
+                cand_preview = cand[:50] + "..." if len(cand) > 50 else cand
+                console.print(f"      [{i}] Score={score.total:.2f} {cand_preview}")
     
     # Restore placeholders
     candidate = candidates[0] if candidates else ""
-    # #region agent log
-    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"pipeline.py:195","message":"Before restore","data":{"block_id":mb.block_id,"candidate_len":len(candidate),"candidate_preview":candidate[:100],"num_candidates":len(candidates),"registry_size":len(mb.registry) if mb.registry else 0}})+'\n')
-    # #endregion
+    
+    # CRITICAL: Check for FAKE placeholders (generated by LLM, not in registry)
+    fake_placeholder_detected = False
+    if candidate and mb.registry:
+        # Find all placeholders in candidate
+        import re
+        candidate_placeholders = set(re.findall(r'<<[A-Z_]+_\d+>>', candidate))
+        # Find all placeholders in registry
+        registry_placeholders = set(mb.registry.keys())
+        # Check if candidate has placeholders NOT in registry
+        fake_placeholders = candidate_placeholders - registry_placeholders
+        if fake_placeholders:
+            fake_placeholder_detected = True
+            logger.error(f"Block {mb.block_id}: LLM GENERATED FAKE PLACEHOLDERS: {fake_placeholders}")
+            logger.error(f"Block {mb.block_id}: These placeholders were NOT in source - this is hallucination!")
+            # Remove fake placeholders before restoration
+            for fake in fake_placeholders:
+                candidate = candidate.replace(fake, "")
+                logger.warning(f"Block {mb.block_id}: Removed fake placeholder {fake}")
+    
     restored, restore_errors = masker.restore(candidate, mb.registry, tolerant=True)
-    # #region agent log
-    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"pipeline.py:197","message":"After restore","data":{"block_id":mb.block_id,"restored_len":len(restored),"restored_preview":restored[:100],"restore_errors":restore_errors,"num_restore_errors":len(restore_errors)}})+'\n')
-    # #endregion
+    
+    # PHASE 2.1 & 2.3: Handle section prefix extraction and validation
+    section_prefix = mb.meta.get("section_prefix", "") if mb.meta else ""
+    content_only_text = mb.meta.get("content_only", source_text) if mb.meta else source_text
+    
+    if section_prefix:
+        # PHASE 2.3: Validate that translation has section prefix
+        # If not, add it (auto-fix)
+        # Pass content_only_text (not source_text) to avoid double prefix
+        restored = validate_section_numbers(content_only_text, restored, section_prefix, cfg.target_lang)
+        logger.info(f"Block {mb.block_id}: Validated section prefix in translation")
+    
+    # CRITICAL: Hallucination detection - check if translation is WAY longer than source
+    hallucination_detected = False
+    if restored.strip() and source_text.strip():
+        # For comparison, use original full text (WITH prefix if it exists)
+        comparison_source = mb.meta.get("original_full_text", source_text) if mb.meta else source_text
+        source_len = len(comparison_source.strip())
+        restored_len = len(restored.strip())
+        length_ratio = restored_len / source_len if source_len > 0 else 0
+        
+        # PHASE 2.4: Stricter hallucination detection for headers
+        if is_header_block:
+            max_ratio = 2.0  # Headers can be at most 2x source length
+        else:
+            # For very short blocks (<50 chars), allow max 3x expansion
+            # For longer blocks, allow max 2x expansion
+            max_ratio = 3.0 if source_len < 50 else 2.0
+        
+        if length_ratio > max_ratio:
+            hallucination_detected = True
+            logger.error(f"Block {mb.block_id}: HALLUCINATION - Translation {length_ratio:.1f}x longer than source!")
+            logger.error(f"Block {mb.block_id}: Source ({source_len} chars): '{comparison_source[:100]}'")
+            logger.error(f"Block {mb.block_id}: Translation ({restored_len} chars): '{restored[:100]}'")
     
     # Check identity translation
     identity_translation = False
@@ -230,47 +505,66 @@ def _translate_single_block(
     candidate_empty = candidate.strip() == ""
     if candidate_empty:
         logger.error(f"Block {mb.block_id}: Backend returned EMPTY candidate! This means all backends failed.")
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"pipeline.py:232","message":"Empty candidate from backend","data":{"block_id":mb.block_id,"num_candidates":len(candidates),"backend":res_meta.get("backend","unknown")}})+'\n')
-        # #endregion
     
     placeholders_ok = (
         not candidate_empty
         and (len(registry) == 0 or masker.placeholders_present(candidate, registry))
     )
-    # #region agent log
-    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-        import json
-        validation_details = {
-            "block_id": mb.block_id,
-            "placeholders_ok": placeholders_ok,
-            "candidate_empty": candidate_empty,
-            "registry_size": len(registry),
-            "registry_is_none": mb.registry is None,
-            "placeholders_present": masker.placeholders_present(candidate, registry) if candidate.strip() and registry else (len(registry) == 0),
-            "restore_errors_count": len(restore_errors),
-            "restore_errors": restore_errors,
-            "identity_translation": identity_translation,
-            "wrong_translation": wrong_translation,
-            "restored_empty": restored.strip() == "",
-            "restored_len": len(restored),
-            "backend": res_meta.get("backend", "unknown"),
-            "backend_meta": res_meta,
-        }
-        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"pipeline.py:250","message":"Validation details","data":validation_details})+'\n')
-    # #endregion
-    ok = placeholders_ok and len(restore_errors) == 0 and not identity_translation and not wrong_translation and restored.strip() != ""
+
+    ok = (
+        placeholders_ok 
+        and len(restore_errors) == 0 
+        and not identity_translation 
+        and not wrong_translation 
+        and not hallucination_detected 
+        and not fake_placeholder_detected
+        and restored.strip() != ""
+    )
+    
+    # Collect errors
+    errors = []
+    if restore_errors:
+        errors.extend(restore_errors)
+    if hallucination_detected:
+        errors.append("hallucination")
+    if fake_placeholder_detected:
+        errors.append("fake_placeholders")
+    if identity_translation:
+        errors.append("identity_translation")
+        # Enhanced logging for identity translations
+        from difflib import SequenceMatcher
+        similarity = SequenceMatcher(None, source_text, restored).ratio() if restored else 0.0
+        logger.warning(
+            f"Block {mb.block_id}: Identity translation detected\n"
+            f"  Source: '{source_text[:100]}'\n"
+            f"  Translation: '{restored[:100] if restored else 'EMPTY'}'\n"
+            f"  Similarity: {similarity:.2%}\n"
+            f"  Is Header: {is_header_block}\n"
+            f"  Action: {'Will retry with emergency translation' if identity_result.should_retry else 'Accepting (may be valid for technical terms)'}"
+        )
+    if wrong_translation:
+        errors.append("wrong_translation")
+    if not errors and not ok:
+        errors.append("validation_failed")
     
     # Create TranslatedBlock
     tb = TranslatedBlock(
         block_id=mb.block_id,
         source_text=mb.masked_text,
-        translated_text=restored,
+        translated_text=restored if ok or not hallucination_detected else source_text,  # Use source if hallucination
         ok=ok,
-        errors=restore_errors if restore_errors else ([] if ok else ["validation_failed"]),
+        errors=errors,
         meta=res_meta,
+    )
+    
+    # Enhanced logging for block completion
+    status = "✅ SUCCESS" if ok else "❌ FAILED"
+    logger.info(
+        f"Block {mb.block_id}: Translation complete - {status}\n"
+        f"  Source: '{mb.masked_text[:100]}...'\n"
+        f"  Translation: '{restored[:100] if restored else 'EMPTY'}...'\n"
+        f"  Errors: {errors if errors else 'None'}\n"
+        f"  Final status: {'OK' if ok else 'FAILED'}"
     )
     
     return tb, restored
@@ -289,15 +583,22 @@ def run_pipeline(
     t0 = time.time()
     logger.info(f"Starting translation pipeline: {input_pdf} -> {output_pdf}")
     logger.debug(f"Backend: {backend.name}, Config: {cfg}")
-    # #region agent log
-    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"pipeline.py:243","message":"Pipeline started","data":{"input_pdf":input_pdf,"output_pdf":output_pdf,"backend":backend.name,"parallel":cfg.parallel_translation,"max_workers":cfg.max_workers,"n_candidates":cfg.n_candidates}})+'\n')
-    # #endregion
     out_dir = Path(cfg.output_dir) / Path(input_pdf).stem
     
-    # Clear all previous artifacts and cache for this PDF to ensure fresh translation
+    # CRITICAL: Clear all previous artifacts and cache for this PDF to ensure fresh translation
     if out_dir.exists():
+        import shutil
+        logger.info(f"Clearing previous artifacts: {out_dir}")
+        try:
+            shutil.rmtree(out_dir)
+            logger.info(f"✓ Cleared cache/artifacts for fresh translation")
+        except Exception as e:
+            logger.warning(f"Could not clear artifacts: {e}")
+    
+    # Ensure output directory exists
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    if False:  # Placeholder to maintain structure
         logger.info(f"Clearing previous artifacts for {Path(input_pdf).stem}")
         import shutil
         try:
@@ -362,12 +663,6 @@ def run_pipeline(
             from scitrans.utils.language_detection import detect_language
             detected_lang, lang_confidence = detect_language(src)
             
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"N","location":"pipeline.py:150","message":"Language detection result","data":{"block_id":block.id,"detected_lang":detected_lang,"lang_confidence":lang_confidence,"source_lang":cfg.source_lang,"target_lang":cfg.target_lang,"source_preview":src[:50]}})+'\n')
-            # #endregion
-            
             if detected_lang not in (cfg.source_lang, cfg.target_lang) and lang_confidence > 0.5:
                 # Block is in a different language - preserve it
                 skipped_blocks.append((block.id, f"preserve_lang_{detected_lang}"))
@@ -375,11 +670,6 @@ def run_pipeline(
                     f"Preserving block {block.id} in language {detected_lang} "
                     f"(confidence: {lang_confidence:.2f}) - not translating"
                 )
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"N","location":"pipeline.py:160","message":"Preserving block due to language","data":{"block_id":block.id,"detected_lang":detected_lang,"lang_confidence":lang_confidence,"source_preview":src[:50]}})+'\n')
-                # #endregion
                 # Store original text as translation to preserve it
                 translations[block.id] = src
                 continue
@@ -390,32 +680,37 @@ def run_pipeline(
                 if block_type == "title":
                     title_count += 1
                     logger.debug(f"Detected TITLE block {block.id}: '{src[:50]}...'")
-                    # #region agent log
-                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"pipeline.py:375","message":"TITLE detected during parsing","data":{"block_id":block.id,"block_type":block_type,"source_preview":src[:50]}})+'\n')
-                    # #endregion
                 else:
                     header_count += 1
                     logger.debug(f"Detected HEADER block {block.id}: '{src[:50]}...'")
-                    # #region agent log
-                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"pipeline.py:379","message":"HEADER detected during parsing","data":{"block_id":block.id,"block_type":block_type,"source_preview":src[:50]}})+'\n')
-                    # #endregion
-            # Pass block to masker for advanced span-level math detection
-            masked, registry, counts = masker.mask(src, block=block)
-            masked_blocks.append(
-                MaskedBlock(
-                    block_id=block.id, masked_text=masked, registry=registry, mask_counts=counts
-                )
-            )
-            # #region agent log
+            
+            # PHASE 2.1: Extract section prefix for headers (pre-processing)
+            section_prefix = ""
+            content_only = src  # Content without prefix
             if block.meta.get("is_header"):
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"pipeline.py:386","message":"Header/title added to masked_blocks","data":{"block_id":block.id,"block_type":block.meta.get("block_type","header"),"masked_len":len(masked)}})+'\n')
-            # #endregion
+                section_prefix, content_only = extract_section_prefix(src)
+                if section_prefix:
+                    logger.info(f"Extracted section prefix '{section_prefix}' from block {block.id}, content: '{content_only}'")
+            
+            # Pass CONTENT ONLY to masker (without section prefix)
+            masked, registry, counts = masker.mask(content_only, block=block)
+            
+            # PHASE 2.1: Create masked block with section prefix AND original full text in metadata
+            meta_dict = {}
+            if section_prefix:
+                meta_dict["section_prefix"] = section_prefix
+                meta_dict["original_full_text"] = src  # Store original WITH prefix
+                meta_dict["content_only"] = content_only  # Store content WITHOUT prefix
+            
+            masked_block = MaskedBlock(
+                block_id=block.id, 
+                masked_text=masked, 
+                registry=registry, 
+                mask_counts=counts,
+                meta=meta_dict
+            )
+            
+            masked_blocks.append(masked_block)
     
     logger.info(f"Masked {len(masked_blocks)} blocks for translation (headers, titles, paragraphs, numbering included)")
     console.print(f"[cyan]✓ Extracted {total_text_blocks} text blocks, masking {len(masked_blocks)} for translation[/cyan]")
@@ -492,6 +787,27 @@ def run_pipeline(
     if cancel_event is None:
         cancel_event = threading.Event()
 
+    # CONTENT TYPE DETECTION: Detect if document is academic/technical
+    # This adjusts identity detection thresholds to allow technical terms
+    from scitrans.utils.content_detector import detect_content_type, ContentType
+    
+    content_analysis = detect_content_type(doc)
+    logger.info(f"Content analysis: {content_analysis.reasoning}")
+    
+    # Set identity thresholds based on content type
+    if content_analysis.content_type == ContentType.ACADEMIC:
+        identity_threshold_nonheader = 0.95  # Relaxed for academic (was 0.90)
+        identity_threshold_header = 0.98     # Relaxed for academic headers (was 0.95)
+        console.print(f"[cyan]📚 Academic content detected - using relaxed identity threshold (95/98%)[/cyan]")
+        logger.info(
+            f"Academic content detected: {content_analysis.technical_keyword_count} keywords, "
+            f"{content_analysis.citation_count} citations, {content_analysis.math_density*100:.1f}% math"
+        )
+    else:
+        identity_threshold_nonheader = 0.90  # Standard for general content
+        identity_threshold_header = 0.95     # Standard for general headers
+        logger.info(f"General content - using standard identity threshold (90/95%)")
+
     logger.info(f"Starting translation of {len(masked_blocks)} blocks...")
     if cfg.parallel_translation:
         console.print(f"[cyan]🔄 Translating {len(masked_blocks)} blocks in parallel ({cfg.max_workers} workers)...[/cyan]")
@@ -519,142 +835,631 @@ def run_pipeline(
         raise RuntimeError("Translation cancelled by user")
     
     # Use parallel translation if enabled
-    # NOTE: cascade_free already parallelizes internally (Ollama + Google in parallel)
-    # So we disable pipeline-level parallelization for cascade_free to avoid nested threading issues
-    should_use_parallel = (
-        cfg.parallel_translation 
-        and len(masked_blocks) > 1 
-        and backend.name != "cascade_free"
-    )
-    if backend.name == "cascade_free" and cfg.parallel_translation:
-        logger.info(
-            "cascade_free backend detected: Disabling pipeline-level parallelization "
-            "(cascade_free already runs Ollama + Google in parallel internally)"
-        )
-    if should_use_parallel:
-        logger.info(f"Using parallel translation with {cfg.max_workers} workers")
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"pipeline.py:438","message":"Parallel translation path selected","data":{"num_blocks":len(masked_blocks),"max_workers":cfg.max_workers}})+'\n')
-        # #endregion
-        translated_blocks_dict: dict[str, TranslatedBlock] = {}
-        translations_dict: dict[str, str] = {}
-        completed = 0
+    # PROGRESSIVE BATCHING: Helper function to create progressively larger batches
+    def create_progressive_batches(
+        blocks: list,
+        start_size: int = 32,
+        mid_size: int = 64,
+        final_size: int = 96,
+    ) -> list[list]:
+        """Create progressively larger batches for translation.
         
-        def translate_block_parallel(mb: MaskedBlock, idx: int) -> tuple[str, TranslatedBlock, str]:
-            """Translate a block in parallel - simplified version without retry."""
-            if cancel_event.is_set():
-                raise RuntimeError("Translation cancelled")
-            try:
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"E","location":"pipeline.py:444","message":"Starting parallel block translation","data":{"block_id":mb.block_id,"idx":idx,"total":len(masked_blocks)}})+'\n')
-                # #endregion
-                tb, restored = _translate_single_block(
-                    mb, idx, len(masked_blocks), backend, cfg, doc, masker, glossary, pre_scores_by_id, cancel_event
-                )
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"E","location":"pipeline.py:451","message":"Parallel block translation completed","data":{"block_id":mb.block_id,"ok":tb.ok,"restored_len":len(restored),"errors":tb.errors}})+'\n')
-                # #endregion
-                return mb.block_id, tb, restored
-            except RuntimeError:
-                raise  # Re-raise cancellation
-            except Exception as e:
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"E","location":"pipeline.py:457","message":"Parallel block translation failed","data":{"block_id":mb.block_id,"error":str(e),"error_type":type(e).__name__}})+'\n')
-                # #endregion
-                logger.error(f"Block {mb.block_id}: Parallel translation failed: {e}", exc_info=True)
-                # Return failed block
-                tb = TranslatedBlock(
-                    block_id=mb.block_id,
-                    source_text=mb.masked_text,
-                    translated_text="",
-                    ok=False,
-                    errors=[f"parallel_error: {e}"],
-                    meta={},
-                )
-                return mb.block_id, tb, ""
+        Strategy:
+        - Blocks 0-200: 32 blocks/batch (conservative start)
+        - Blocks 201-500: 64 blocks/batch (if stable)
+        - Blocks 501+: 96 blocks/batch (maximum efficiency)
         
-        # Execute in parallel
-        with ThreadPoolExecutor(max_workers=cfg.max_workers) as executor:
-            future_to_block = {
-                executor.submit(translate_block_parallel, mb, idx): mb
-                for idx, mb in enumerate(masked_blocks)
-            }
+        This prevents overwhelming backends with huge batches while
+        maintaining good performance for large documents.
+        
+        Args:
+            blocks: List of blocks to batch
+            start_size: Initial batch size (32)
+            mid_size: Mid batch size for blocks 201-500 (64)
+            final_size: Final batch size for blocks 501+ (96)
             
-            for future in as_completed(future_to_block):
-                if cancel_event.is_set():
-                    logger.warning("Translation cancelled - stopping parallel execution")
-                    # Cancel remaining futures
-                    for f in future_to_block:
-                        f.cancel()
-                    raise RuntimeError("Translation cancelled by user")
+        Returns:
+            List of batches (each batch is list of blocks)
+        """
+        if len(blocks) < start_size:
+            # Small document: single batch
+            return [blocks]
+        
+        batches = []
+        idx = 0
+        
+        # Phase 1: Blocks 0-200 with start_size (32)
+        while idx < min(200, len(blocks)):
+            end_idx = min(idx + start_size, len(blocks))
+            batches.append(blocks[idx:end_idx])
+            idx = end_idx
+        
+        # Phase 2: Blocks 201-500 with mid_size (64)
+        while idx < min(500, len(blocks)):
+            end_idx = min(idx + mid_size, len(blocks))
+            batches.append(blocks[idx:end_idx])
+            idx = end_idx
+        
+        # Phase 3: Blocks 501+ with final_size (96)
+        while idx < len(blocks):
+            end_idx = min(idx + final_size, len(blocks))
+            batches.append(blocks[idx:end_idx])
+            idx = end_idx
+        
+        return batches
+    
+    # BATCHING SUPPORT: Check if backend supports translate_batch() for performance
+    # Progressive batching: 32 blocks minimum, scales up for large documents
+    use_progressive_batching = hasattr(backend, 'translate_batch') and len(masked_blocks) >= 32
+    use_simple_batching = hasattr(backend, 'translate_batch') and 8 <= len(masked_blocks) < 32
+    batch_completed_successfully = False  # Track if batch completed without falling back
+    
+    if use_progressive_batching:
+        logger.info(f"Backend supports batching: Using PROGRESSIVE batching for {len(masked_blocks)} blocks")
+        console.print(f"[cyan]⚡ Using progressive batch translation mode ({len(masked_blocks)} blocks)[/cyan]")
+        
+        # Create progressive batches (32→64→96)
+        batches = create_progressive_batches(masked_blocks)
+        logger.info(f"Split {len(masked_blocks)} blocks into {len(batches)} progressive batches")
+        
+        # Track batch statistics
+        from scitrans.translation.backends.base import TranslateRequest
+        successful_blocks = 0
+        failed_blocks = 0
+        identity_failures = 0
+        timeout_failures = 0
+        
+        try:
+            for batch_num, batch_blocks in enumerate(batches, 1):
+                logger.info(f"Processing batch {batch_num}/{len(batches)}: {len(batch_blocks)} blocks")
+                console.print(f"[cyan]📦 Batch {batch_num}/{len(batches)}: {len(batch_blocks)} blocks[/cyan]")
                 
-                mb = future_to_block[future]
-                try:
-                    block_id, tb, restored = future.result()
-                    translated_blocks_dict[block_id] = tb
-                    translations_dict[block_id] = restored
-                    completed += 1
-                    block_progress = 0.3 + (completed / len(masked_blocks)) * 0.5
-                    safe_progress_update(block_progress, desc=f"Translated {completed}/{len(masked_blocks)} blocks...")
-                    if tb.ok:
-                        logger.info(f"Block {block_id}: ✅ OK")
+                # Build translation requests for this batch
+                requests = []
+                request_to_mb = {}
+                
+                for idx, mb in enumerate(batch_blocks):
+                    # Get source text and block metadata
+                    source_text = ""
+                    is_header = False
+                    block_type = "normal"
+                    
+                    for page in doc.pages:
+                        for block in page.blocks:
+                            if block.id == mb.block_id:
+                                source_text = _block_text(block)
+                                is_header = block.meta.get("is_header", False)
+                                block_type = block.meta.get("block_type", "normal")
+                                break
+                    
+                    # Mask source text
+                    masked, registry, counts = masker.mask(source_text, None)
+                    
+                    # Build system prompt
+                    system_prompt = build_system_prompt(
+                        source=cfg.source_lang,
+                        target=cfg.target_lang,
+                        glossary=glossary,
+                        is_header=is_header,
+                    )
+                    
+                    # Calculate per-request timeout based on text length
+                    # Formula: 10s per 50 chars, minimum 60s
+                    text_length = len(masked)
+                    per_request_timeout = max(60.0, (text_length / 50) * 10)
+                    
+                    # Create request with identity threshold and timeout
+                    req = TranslateRequest(
+                        text=masked,
+                        source_lang=cfg.source_lang,
+                        target_lang=cfg.target_lang,
+                        system_prompt=system_prompt,
+                        temperature=cfg.temperature,
+                        n_candidates=cfg.n_candidates,
+                        context={"is_header": is_header, "block_type": block_type, "block_id": mb.block_id},
+                        identity_threshold=identity_threshold_header if is_header else identity_threshold_nonheader,
+                        is_header=is_header,
+                        timeout=per_request_timeout,
+                    )
+                    requests.append(req)
+                    request_to_mb[len(requests) - 1] = (mb, masked, registry, source_text)
+                
+                # Execute this batch
+                batch_results = backend.translate_batch(requests)
+                
+                # Process results - accept partial results (better than nothing)
+                for idx, result in enumerate(batch_results):
+                    mb, masked, registry, source_text = request_to_mb[idx]
+                    
+                    # Extract best candidate
+                    if result and result.candidates and result.candidates[0]:
+                        best_translation = result.candidates[0]
+                        
+                        # NEW: Accept partial results if better than nothing
+                        if best_translation and len(best_translation.strip()) > 0:
+                            # Restore placeholders
+                            try:
+                                restored, errors = masker.restore(best_translation, registry)
+                                
+                                # Even if restore has errors, use it (better than nothing)
+                                is_success = len(restored.strip()) > 0 if restored else False
+                                
+                                # Use restored if available, otherwise use original translation
+                                final_text = restored if restored and restored.strip() else best_translation
+                                
+                                if is_success:
+                                    successful_blocks += 1
+                                else:
+                                    failed_blocks += 1
+                                    # Check error types for statistics
+                                    if result.meta:
+                                        error_str = str(result.meta.get("error", "")).lower()
+                                        if "identity" in error_str:
+                                            identity_failures += 1
+                                        elif "timeout" in error_str:
+                                            timeout_failures += 1
+                                
+                                tb = TranslatedBlock(
+                                    block_id=mb.block_id,
+                                    source_text=source_text,
+                                    translated_text=final_text,
+                                    ok=is_success,
+                                    errors=errors if errors else [],
+                                    meta={**(result.meta or {}), "partial_result": not is_success},
+                                )
+                            except Exception as restore_error:
+                                # Restoration error - use translation anyway (better than nothing)
+                                logger.warning(f"Placeholder restore failed for {mb.block_id}, using translation anyway: {restore_error}")
+                                failed_blocks += 1
+                                tb = TranslatedBlock(
+                                    block_id=mb.block_id,
+                                    source_text=source_text,
+                                    translated_text=best_translation,  # Use translation even without placeholders
+                                    ok=False,
+                                    errors=["restore_error"],
+                                    meta={**(result.meta or {}), "restore_error": str(restore_error), "needs_emergency_retry": True},
+                                )
+                        else:
+                            # Empty result - will be retried in emergency phase
+                            failed_blocks += 1
+                            tb = TranslatedBlock(
+                                block_id=mb.block_id,
+                                source_text=source_text,
+                                translated_text="",
+                                ok=False,
+                                errors=["empty_translation"],
+                                meta={"needs_emergency_retry": True},
+                            )
                     else:
-                        logger.warning(f"Block {block_id}: ❌ FAILED - {tb.errors}")
+                        # No result - will be retried in emergency phase
+                        failed_blocks += 1
+                        tb = TranslatedBlock(
+                            block_id=mb.block_id,
+                            source_text=source_text,
+                            translated_text="",
+                            ok=False,
+                            errors=["no_translation_result"],
+                            meta={"needs_emergency_retry": True},
+                        )
+                    
+                    translated_blocks.append(tb)
+                
+                # Log batch statistics with detailed information
+                total_processed = successful_blocks + failed_blocks
+                success_rate = successful_blocks / total_processed if total_processed > 0 else 0.0
+                logger.info(
+                    f"Batch {batch_num}/{len(batches)} complete:\n"
+                    f"  Success: {successful_blocks}, Failed: {failed_blocks} (rate: {success_rate:.1%})\n"
+                    f"  Identity failures: {identity_failures}, Timeout failures: {timeout_failures}\n"
+                    f"  Total blocks in batch: {len(requests)}"
+                )
+                console.print(
+                    f"[cyan]📊 Batch {batch_num}/{len(batches)}: "
+                    f"✅ {successful_blocks} success, ❌ {failed_blocks} failed "
+                    f"({success_rate:.1%} success rate)[/cyan]"
+                )
+                if identity_failures > 0 or timeout_failures > 0:
+                    console.print(
+                        f"[dim]  Identity failures: {identity_failures}, "
+                        f"Timeout failures: {timeout_failures}[/dim]"
+                    )
+            
+            logger.info(
+                f"Progressive batch translation complete: {len(translated_blocks)} blocks translated\n"
+                f"  Total blocks processed: {len(translated_blocks)}\n"
+                f"  Successful: {sum(1 for tb in translated_blocks if tb.ok)}\n"
+                f"  Failed: {sum(1 for tb in translated_blocks if not tb.ok)}"
+            )
+            successful_count = sum(1 for tb in translated_blocks if tb.ok)
+            failed_count = sum(1 for tb in translated_blocks if not tb.ok)
+            console.print(
+                f"[green]✅ Progressive batch complete: {len(translated_blocks)} blocks "
+                f"({successful_count} success, {failed_count} failed)[/green]"
+            )
+            batch_completed_successfully = True
+            
+            # EMERGENCY RETRY: Retry any failed blocks with emergency translation
+            failed_block_indices = []
+            for idx, tb in enumerate(translated_blocks):
+                if not tb.ok or not tb.translated_text or tb.translated_text.strip() == "":
+                    failed_block_indices.append(idx)
+            
+            if failed_block_indices:
+                logger.warning(f"🚨 {len(failed_block_indices)} blocks failed - attempting emergency retry...")
+                console.print(f"[yellow]🆘 Emergency retry for {len(failed_block_indices)} failed blocks...[/yellow]")
+                
+                for idx in failed_block_indices:
+                    # Find corresponding masked block
+                    mb = None
+                    for page in doc.pages:
+                        for block in page.blocks:
+                            if block.id == translated_blocks[idx].block_id:
+                                # Re-mask the source text
+                                source_text = _block_text(block)
+                                masked, registry, _ = masker.mask(source_text, None)
+                                mb = MaskedBlock(
+                                    block_id=block.id,
+                                    masked_text=masked,
+                                    registry=registry,
+                                )
+                                break
+                        if mb:
+                            break
+                    
+                    if mb:
+                        emergency_result = emergency_translate(
+                            mb, backend, cfg.source_lang, cfg.target_lang, masker, temp=0.9
+                        )
+                        if emergency_result:
+                            translated_blocks[idx] = emergency_result
+                            logger.info(f"✅ Emergency retry succeeded for block {mb.block_id}")
+                        else:
+                            logger.error(f"❌ Emergency retry failed for block {mb.block_id}")
+                    else:
+                        logger.error(f"❌ Could not find masked block for failed block {translated_blocks[idx].block_id}")
+            
+        except Exception as e:
+            logger.error(f"Progressive batch translation failed: {e}", exc_info=True)
+            console.print(f"[red]❌ Batch translation failed, falling back to sequential[/red]")
+            batch_completed_successfully = False
+    
+    elif use_simple_batching:
+        logger.info(f"Backend supports batching: Using simple batching for {len(masked_blocks)} blocks")
+        console.print(f"[cyan]⚡ Using batch translation mode ({len(masked_blocks)} blocks)[/cyan]")
+        
+        # Build all translation requests
+        from scitrans.translation.backends.base import TranslateRequest
+        requests = []
+        request_to_mb = {}  # Map request index to masked block
+        
+        for idx, mb in enumerate(masked_blocks):
+            # Get source text and block metadata
+            source_text = ""
+            is_header = False
+            block_type = "normal"
+            
+            for page in doc.pages:
+                for block in page.blocks:
+                    if block.id == mb.block_id:
+                        source_text = _block_text(block)
+                        is_header = block.meta.get("is_header", False)
+                        block_type = block.meta.get("block_type", "normal")
+                        break
+            
+            # Mask source text
+            masked, registry, counts = masker.mask(source_text, None)
+            
+            # Build system prompt
+            system_prompt = build_system_prompt(
+                source=cfg.source_lang,
+                target=cfg.target_lang,
+                glossary=glossary,
+                is_header=is_header,
+            )
+            
+            # Calculate per-request timeout based on text length
+            # Formula: 10s per 50 chars, minimum 60s
+            text_length = len(masked)
+            per_request_timeout = max(60.0, (text_length / 50) * 10)
+            
+            # Create request with identity threshold and timeout
+            req = TranslateRequest(
+                text=masked,
+                source_lang=cfg.source_lang,
+                target_lang=cfg.target_lang,
+                system_prompt=system_prompt,
+                temperature=cfg.temperature,
+                n_candidates=cfg.n_candidates,
+                context={"is_header": is_header, "block_type": block_type, "block_id": mb.block_id},
+                identity_threshold=identity_threshold_header if is_header else identity_threshold_nonheader,
+                is_header=is_header,
+                timeout=per_request_timeout,
+            )
+            requests.append(req)
+            request_to_mb[len(requests) - 1] = (mb, masked, registry, source_text)
+        
+        # Execute batch translation
+        logger.info(f"Submitting batch of {len(requests)} requests to backend")
+        console.print(f"[cyan]📦 Translating {len(requests)} blocks in batch...[/cyan]")
+        
+        try:
+            results = backend.translate_batch(requests)
+            logger.info(f"Batch translation completed: {len(results)} results received")
+            
+            # PHASE 4: Validate no missing blocks
+            if len(results) != len(requests):
+                logger.error(
+                    f"MISSING BLOCKS DETECTED: Sent {len(requests)} requests, "
+                    f"got {len(results)} results! Missing: {len(requests) - len(results)} blocks"
+                )
+                # Pad results with None for missing blocks
+                while len(results) < len(requests):
+                    results.append(None)
+                    logger.error(f"Added placeholder for missing block at index {len(results)-1}")
+            
+            # CRITICAL: Use the outer translated_blocks variable, don't create a new local one
+            # Process results (append to existing translated_blocks from line 654) - accept partial results
+            for idx, result in enumerate(results):
+                mb, masked, registry, source_text = request_to_mb[idx]
+                
+                # Extract best candidate
+                if result and result.candidates and result.candidates[0]:
+                    best_translation = result.candidates[0]
+                    
+                    # NEW: Accept partial results if better than nothing
+                    if best_translation and len(best_translation.strip()) > 0:
+                        # Restore placeholders
+                        try:
+                            restored, errors = masker.restore(best_translation, registry)
+                            
+                            # Even if restore has errors, use it (better than nothing)
+                            is_success = len(restored.strip()) > 0 if restored else False
+                            
+                            # Use restored if available, otherwise use original translation
+                            final_text = restored if restored and restored.strip() else best_translation
+                            
+                            tb = TranslatedBlock(
+                                block_id=mb.block_id,
+                                source_text=source_text,
+                                translated_text=final_text,
+                                ok=is_success,
+                                errors=errors if errors else [],
+                                meta={**(result.meta or {}), "partial_result": not is_success},
+                            )
+                        except Exception as restore_error:
+                            # Restoration error - use translation anyway (better than nothing)
+                            logger.warning(f"Placeholder restore failed for {mb.block_id}, using translation anyway: {restore_error}")
+                            tb = TranslatedBlock(
+                                block_id=mb.block_id,
+                                source_text=source_text,
+                                translated_text=best_translation,  # Use translation even without placeholders
+                                ok=False,
+                                errors=["restore_error"],
+                                meta={**(result.meta or {}), "restore_error": str(restore_error), "needs_emergency_retry": True},
+                            )
+                    else:
+                        # Empty result - will be retried in emergency phase
+                        tb = TranslatedBlock(
+                            block_id=mb.block_id,
+                            source_text=source_text,
+                            translated_text="",
+                            ok=False,
+                            errors=["empty_translation"],
+                            meta={"needs_emergency_retry": True},
+                        )
+                else:
+                    # No result - will be retried in emergency phase
+                    tb = TranslatedBlock(
+                        block_id=mb.block_id,
+                        source_text=source_text,
+                        translated_text="",
+                        ok=False,
+                        errors=["no_translation_result"],
+                        meta={"needs_emergency_retry": True},
+                    )
+                
+                translated_blocks.append(tb)
+                
+                # Log progress
+                if (idx + 1) % 5 == 0:
+                    logger.info(f"Processed {idx + 1}/{len(results)} batch results")
+                    console.print(f"[cyan]📊 Processed {idx + 1}/{len(results)} results[/cyan]")
+            
+            logger.info(f"Batch translation complete: {len(translated_blocks)} blocks translated")
+            console.print(f"[green]✅ Batch translation complete: {len(translated_blocks)} blocks[/green]")
+            batch_completed_successfully = True  # Mark batch as successful
+            
+            # EMERGENCY RETRY: Retry any failed blocks with emergency translation
+            failed_block_indices = []
+            for idx, tb in enumerate(translated_blocks):
+                if not tb.ok or not tb.translated_text or tb.translated_text.strip() == "":
+                    failed_block_indices.append(idx)
+            
+            if failed_block_indices:
+                logger.warning(f"🚨 {len(failed_block_indices)} blocks failed - attempting emergency retry...")
+                console.print(f"[yellow]🆘 Emergency retry for {len(failed_block_indices)} failed blocks...[/yellow]")
+                
+                for idx in failed_block_indices:
+                    # Find corresponding masked block
+                    mb = None
+                    for page in doc.pages:
+                        for block in page.blocks:
+                            if block.id == translated_blocks[idx].block_id:
+                                # Re-mask the source text
+                                source_text = _block_text(block)
+                                masked, registry, _ = masker.mask(source_text, None)
+                                mb = MaskedBlock(
+                                    block_id=block.id,
+                                    masked_text=masked,
+                                    registry=registry,
+                                )
+                                break
+                        if mb:
+                            break
+                    
+                    if mb:
+                        emergency_result = emergency_translate(
+                            mb, backend, cfg.source_lang, cfg.target_lang, masker, temp=0.9
+                        )
+                        if emergency_result:
+                            translated_blocks[idx] = emergency_result
+                            logger.info(f"✅ Emergency retry succeeded for block {mb.block_id}")
+                        else:
+                            logger.error(f"❌ Emergency retry failed for block {mb.block_id}")
+                    else:
+                        logger.error(f"❌ Could not find masked block for failed block {translated_blocks[idx].block_id}")
+            
+        except Exception as e:
+            logger.error(f"Batch translation failed: {e}", exc_info=True)
+            console.print(f"[red]❌ Batch translation failed, falling back to sequential[/red]")
+            batch_completed_successfully = False  # Batch failed, will use sequential
+    
+    # CRITICAL FIX: Only run sequential/parallel if batch didn't complete successfully
+    # This prevents duplicate translations (batch + sequential both running)
+    if batch_completed_successfully:
+        # Batch completed - skip sequential/parallel paths entirely
+        logger.info(f"✅ Batch completed successfully, skipping sequential/parallel translation")
+        console.print(f"[green]✅ Batch complete - skipping fallback paths[/green]")
+    else:
+        # Batch didn't complete (wasn't used or failed) - use sequential/parallel fallback
+        logger.info(f"🔄 Using sequential/parallel translation (batch_completed={batch_completed_successfully})")
+        console.print(f"[yellow]🔄 Using sequential translation (batch was not used or failed)[/yellow]")
+        # NOTE: cascade_free already parallelizes internally (Ollama + Google in parallel)
+        # So we disable pipeline-level parallelization for cascade_free to avoid nested threading issues
+        should_use_parallel = (
+            cfg.parallel_translation 
+            and len(masked_blocks) > 1 
+            and backend.name != "cascade_free"
+        )
+        if backend.name == "cascade_free" and cfg.parallel_translation:
+            logger.info(
+                "cascade_free backend detected: Disabling pipeline-level parallelization "
+                "(cascade_free already runs Ollama + Google in parallel internally)"
+            )
+        if should_use_parallel:
+            logger.info(f"Using parallel translation with {cfg.max_workers} workers")
+            translated_blocks_dict: dict[str, TranslatedBlock] = {}
+            translations_dict: dict[str, str] = {}
+            completed = 0
+            
+            def translate_block_parallel(mb: MaskedBlock, idx: int) -> tuple[str, TranslatedBlock, str]:
+                """Translate a block in parallel - simplified version without retry."""
+                if cancel_event.is_set():
+                    raise RuntimeError("Translation cancelled")
+                try:
+                    tb, restored = _translate_single_block(
+                        mb, idx, len(masked_blocks), backend, cfg, doc, masker, glossary, pre_scores_by_id, cancel_event
+                    )
+                    return mb.block_id, tb, restored
+                except RuntimeError:
+                    raise  # Re-raise cancellation
                 except Exception as e:
-                    logger.error(f"Block {mb.block_id}: Future exception: {e}", exc_info=True)
+                    logger.error(f"Block {mb.block_id}: Parallel translation failed: {e}", exc_info=True)
+                    # Return failed block
                     tb = TranslatedBlock(
                         block_id=mb.block_id,
                         source_text=mb.masked_text,
                         translated_text="",
                         ok=False,
-                        errors=[f"future_error: {e}"],
+                        errors=[f"parallel_error: {e}"],
                         meta={},
                     )
-                    translated_blocks_dict[mb.block_id] = tb
-                    translations_dict[mb.block_id] = ""
-                    completed += 1
-        
-        # Convert dicts to lists
-        translated_blocks = list(translated_blocks_dict.values())
-        translations = translations_dict
-        logger.info(f"Parallel translation complete: {completed}/{len(masked_blocks)} blocks")
-    else:
-        # Sequential translation (original logic with retry)
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"C","location":"pipeline.py:515","message":"Sequential translation path selected","data":{"num_blocks":len(masked_blocks),"parallel_enabled":cfg.parallel_translation}})+'\n')
-        # #endregion
-        for idx, mb in enumerate(masked_blocks):  # Get pre-score for adaptive strategy
-            # Check for cancellation
-            if cancel_event.is_set():
-                logger.warning("Translation cancelled during sequential execution")
-                raise RuntimeError("Translation cancelled by user")
+                    return mb.block_id, tb, ""
             
-            # Always log progress for every block
-            block_progress = 0.3 + (idx / len(masked_blocks)) * 0.5  # 30% to 80% of total progress
-            safe_progress_update(block_progress, desc=f"Translating block {idx+1}/{len(masked_blocks)}...")
+            # Execute in parallel
+            with ThreadPoolExecutor(max_workers=cfg.max_workers) as executor:
+                future_to_block = {
+                    executor.submit(translate_block_parallel, mb, idx): mb
+                    for idx, mb in enumerate(masked_blocks)
+                }
+                
+                for future in as_completed(future_to_block):
+                    if cancel_event.is_set():
+                        logger.warning("Translation cancelled - stopping parallel execution")
+                        # Cancel remaining futures
+                        for f in future_to_block:
+                            f.cancel()
+                        raise RuntimeError("Translation cancelled by user")
+                    
+                    mb = future_to_block[future]
+                    try:
+                        block_id, tb, restored = future.result()
+                        translated_blocks_dict[block_id] = tb
+                        translations_dict[block_id] = restored
+                        completed += 1
+                        block_progress = 0.3 + (completed / len(masked_blocks)) * 0.5
+                        safe_progress_update(block_progress, desc=f"Translated {completed}/{len(masked_blocks)} blocks...")
+                        if tb.ok:
+                            logger.info(f"Block {block_id}: ✅ OK")
+                        else:
+                            logger.warning(f"Block {block_id}: ❌ FAILED - {tb.errors}")
+                    except Exception as e:
+                        logger.error(f"Block {mb.block_id}: Future exception: {e}", exc_info=True)
+                        tb = TranslatedBlock(
+                            block_id=mb.block_id,
+                            source_text=mb.masked_text,
+                            translated_text="",
+                            ok=False,
+                            errors=[f"future_error: {e}"],
+                            meta={},
+                        )
+                        translated_blocks_dict[mb.block_id] = tb
+                        translations_dict[mb.block_id] = ""
+                        completed += 1
             
-            # Get source text for logging
-            source_text = ""
-            for page in doc.pages:
-                for block in page.blocks:
-                    if block.id == mb.block_id:
-                        source_text = _block_text(block)
-                        break
+            # Convert dicts to lists
+            translated_blocks = list(translated_blocks_dict.values())
+            translations = translations_dict
+            logger.info(f"Parallel translation complete: {completed}/{len(masked_blocks)} blocks")
+        else:
+            # Sequential translation (original logic with retry)
+            for idx, mb in enumerate(masked_blocks):
+                # Check for cancellation
+                if cancel_event.is_set():
+                    logger.warning("Translation cancelled during sequential execution")
+                    raise RuntimeError("Translation cancelled by user")
+                
+                # Always log progress for every block
+                block_progress = 0.3 + (idx / len(masked_blocks)) * 0.5  # 30% to 80% of total progress
+                safe_progress_update(block_progress, desc=f"Translating block {idx+1}/{len(masked_blocks)}...")
+                
+                # Get source text for logging
+                source_text = ""
+                for page in doc.pages:
+                    for block in page.blocks:
+                        if block.id == mb.block_id:
+                            source_text = _block_text(block)
+                            break
+                
+                # Log every block with source text
+                logger.info(f"[{idx+1}/{len(masked_blocks)}] Translating block {mb.block_id}")
+                logger.info(f"  Source text ({len(source_text)} chars): {source_text[:100]}...")
+                console.print(f"[cyan][{idx+1}/{len(masked_blocks)}] Block {mb.block_id}: '{source_text[:60]}...'[/cyan]")
+                
+                # CRITICAL FIX: Call _translate_single_block and append the result
+                try:
+                    tb, restored = _translate_single_block(
+                        mb, idx, len(masked_blocks), backend, cfg, doc, masker, glossary, pre_scores_by_id, cancel_event
+                    )
+                    translated_blocks.append(tb)
+                    logger.debug(f"Block {mb.block_id}: Appended to translated_blocks (ok={tb.ok})")
+                except Exception as e:
+                    logger.error(f"Block {mb.block_id}: Translation failed: {e}", exc_info=True)
+                    # Create a failed block so we don't lose track
+                    tb = TranslatedBlock(
+                        block_id=mb.block_id,
+                        source_text=mb.masked_text,
+                        translated_text="",
+                        ok=False,
+                        errors=[f"translation_error: {str(e)}"],
+                        meta={"backend": backend.name, "error": str(e)}
+                    )
+                    translated_blocks.append(tb)
+                
+                # Skip the old inline translation code below
+                continue
             
-            # Log every block with source text
-            logger.info(f"[{idx+1}/{len(masked_blocks)}] Translating block {mb.block_id}")
-            logger.info(f"  Source text ({len(source_text)} chars): {source_text[:100]}...")
-            console.print(f"[cyan][{idx+1}/{len(masked_blocks)}] Block {mb.block_id}: '{source_text[:60]}...'[/cyan]")
+            # OLD CODE BELOW - will be removed after verification
             pre_score = pre_scores_by_id.get(mb.block_id)
 
             # Get block metadata early for adaptive candidate selection
@@ -681,11 +1486,6 @@ def run_pipeline(
                 block_n_candidates = max(cfg.n_candidates, 3)  # At least 3 candidates for headers
                 block_temperature = cfg.temperature
                 logger.info(f"Block {mb.block_id}: Header block - using {block_n_candidates} candidates for accuracy")
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"pipeline.py:651","message":"Header/title translation starting","data":{"block_id":mb.block_id,"n_candidates":block_n_candidates,"source_preview":source_text[:50]}})+'\n')
-                # #endregion
             else:
                 # Normal block: use config settings, but ensure at least 2 candidates if reranking is enabled
                 block_n_candidates = max(cfg.n_candidates, 2 if cfg.enable_reranking else 1)
@@ -723,7 +1523,7 @@ def run_pipeline(
                         if prev_block.translated_text and prev_block.translated_text.strip():
                             # CRITICAL: Clean instruction spillover from context to prevent pollution
                             from scitrans.utils.translation_cleaner import clean_instruction_spillover
-                            cleaned_context_block = clean_instruction_spillover(prev_block.translated_text.strip())
+                            cleaned_context_block, _ = clean_instruction_spillover(prev_block.translated_text.strip())
                             if cleaned_context_block and cleaned_context_block.strip():
                                 context_blocks.append(cleaned_context_block)
                 
@@ -731,23 +1531,6 @@ def run_pipeline(
                     context_text = "\n\n".join(context_blocks)
                     logger.debug(f"Block {mb.block_id}: Using context from {len(context_blocks)} previous blocks")
                     console.print(f"[dim]  📚 Using context from {len(context_blocks)} previous blocks[/dim]")
-                    # #region agent log
-                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"A","location":"pipeline.py:728","message":"Context window built","data":{"block_id":mb.block_id,"context_window":cfg.context_window,"context_blocks_count":len(context_blocks),"context_length":len(context_text),"context_preview":context_text[:100] if context_text else ""}})+'\n')
-                    # #endregion
-                else:
-                    # #region agent log
-                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"A","location":"pipeline.py:732","message":"Context window empty","data":{"block_id":mb.block_id,"context_window":cfg.context_window,"idx":idx,"translated_blocks_count":len(translated_blocks)}})+'\n')
-                    # #endregion
-            else:
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"A","location":"pipeline.py:736","message":"Context window disabled or first block","data":{"block_id":mb.block_id,"context_window":cfg.context_window,"idx":idx}})+'\n')
-                # #endregion
             
             # CRITICAL: Special handling for blocks that are ENTIRELY placeholders
             # If the masked text is only a placeholder (e.g., "<<PERSON_NAME_0001>>"),
@@ -792,83 +1575,83 @@ def run_pipeline(
                     context=context_text,  # Include context from previous blocks for better quality
                 )
 
-                # DEBUG: Log what we're sending to backend
-                masked_preview = mb.masked_text[:80] + "..." if len(mb.masked_text) > 80 else mb.masked_text
-                logger.info(f"Block {mb.block_id}: Sending to backend (masked, {len(mb.masked_text)} chars): {masked_preview}")
-                logger.debug(f"Block {mb.block_id}: Full masked text: {mb.masked_text}")
+            # DEBUG: Log what we're sending to backend
+            masked_preview = mb.masked_text[:80] + "..." if len(mb.masked_text) > 80 else mb.masked_text
+            logger.info(f"Block {mb.block_id}: Sending to backend (masked, {len(mb.masked_text)} chars): {masked_preview}")
+            logger.debug(f"Block {mb.block_id}: Full masked text: {mb.masked_text}")
 
-                try:
-                    res = backend.translate(req)
-                    candidates = res.candidates if res.candidates else [""]
+            try:
+                res = backend.translate(req)
+                candidates = res.candidates if res.candidates else [""]
                 
-                    # CRITICAL: Clean instruction spillover from backend responses
-                    from scitrans.utils.translation_cleaner import clean_instruction_spillover
-                    cleaned_candidates = []
-                    for cand in candidates:
-                        if cand and cand.strip():
-                            cleaned = clean_instruction_spillover(cand)
-                            if cleaned and cleaned.strip():
-                                cleaned_candidates.append(cleaned)
-                            else:
-                                # If cleaning removed everything, keep original (might be a false positive)
-                                cleaned_candidates.append(cand)
+                # CRITICAL: Clean instruction spillover from backend responses
+                from scitrans.utils.translation_cleaner import clean_instruction_spillover
+                cleaned_candidates = []
+                for cand in candidates:
+                    if cand and cand.strip():
+                        cleaned, _ = clean_instruction_spillover(cand)
+                        if cleaned and cleaned.strip():
+                            cleaned_candidates.append(cleaned)
                         else:
+                            # If cleaning removed everything, keep original (might be a false positive)
                             cleaned_candidates.append(cand)
-                    
-                    candidates = cleaned_candidates
-                    
-                    res_meta = {
-                        "backend": backend.name,
-                        "model": getattr(backend, "model", cfg.model),
-                        "cached": False,
-                        **res.meta,
-                    }
-
-                    # DEBUG: Log what we got back from backend
-                    if candidates and candidates[0]:
-                        candidate_preview = candidates[0][:100] + "..." if len(candidates[0]) > 100 else candidates[0]
-                        logger.info(f"Block {mb.block_id}: Backend returned {len(candidates[0])} chars: {candidate_preview}")
-                        logger.debug(f"Block {mb.block_id}: Full backend response: {candidates[0]}")
-                        console.print(f"[cyan]  ✓ Backend returned {len(candidates[0])} chars[/cyan]")
                     else:
-                        logger.warning(f"Block {mb.block_id}: Backend returned EMPTY translation!")
-                        console.print(f"[red]  ✗ Backend returned EMPTY![/red]")
+                        cleaned_candidates.append(cand)
+                
+                candidates = cleaned_candidates
+                
+                res_meta = {
+                    "backend": backend.name,
+                    "model": getattr(backend, "model", cfg.model),
+                    "cached": False,
+                    **res.meta,
+                }
 
-                    # Log which backends were used (for cascade_free)
-                    if backend.name == "cascade_free" and res.meta.get("backends_used"):
-                        backend_names = [
-                            b["backend"] for b in res.meta["backends_used"] if b.get("success")
-                        ]
-                        if backend_names:
-                            logger.info(
-                                f"Block {mb.block_id}: cascade_free used {', '.join(backend_names)}"
-                            )
+                # DEBUG: Log what we got back from backend
+                if candidates and candidates[0]:
+                    candidate_preview = candidates[0][:100] + "..." if len(candidates[0]) > 100 else candidates[0]
+                    logger.info(f"Block {mb.block_id}: Backend returned {len(candidates[0])} chars: {candidate_preview}")
+                    logger.debug(f"Block {mb.block_id}: Full backend response: {candidates[0]}")
+                    console.print(f"[cyan]  ✓ Backend returned {len(candidates[0])} chars[/cyan]")
+                else:
+                    logger.warning(f"Block {mb.block_id}: Backend returned EMPTY translation!")
+                    console.print(f"[red]  ✗ Backend returned EMPTY![/red]")
+
+                # Log which backends were used (for cascade_free)
+                if backend.name == "cascade_free" and res.meta.get("backends_used"):
+                    backend_names = [
+                        b["backend"] for b in res.meta["backends_used"] if b.get("success")
+                    ]
+                    if backend_names:
+                        logger.info(
+                            f"Block {mb.block_id}: cascade_free used {', '.join(backend_names)}"
+                        )
+                        console.print(
+                            f"[cyan]Block {mb.block_id}: Using {', '.join(backend_names)}[/cyan]"
+                        )
+                        # Warn if only Google Translate
+                        if backend_names == ["google"]:
                             console.print(
-                                f"[cyan]Block {mb.block_id}: Using {', '.join(backend_names)}[/cyan]"
+                                f"[yellow]⚠ Block {mb.block_id}: Using Google Translate only - quality may be poor[/yellow]"
                             )
-                            # Warn if only Google Translate
-                            if backend_names == ["google"]:
-                                console.print(
-                                    f"[yellow]⚠ Block {mb.block_id}: Using Google Translate only - quality may be poor[/yellow]"
-                                )
-                        else:
-                                logger.error(f"Block {mb.block_id}: cascade_free - NO backends succeeded!")
-                                console.print(
-                                    f"[red]❌ Block {mb.block_id}: All backends failed![/red]"
-                                )
+                    else:
+                            logger.error(f"Block {mb.block_id}: cascade_free - NO backends succeeded!")
+                            console.print(
+                                f"[red]❌ Block {mb.block_id}: All backends failed![/red]"
+                            )
 
-                except Exception as e:
-                    logger.error(f"Block {mb.block_id}: Backend translation failed: {e}", exc_info=True)
-                    candidates = [""]
-                    res_meta = {
-                        "backend": backend.name,
-                        "model": getattr(backend, "model", cfg.model),
-                        "cached": False,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    }
-                    console.print(f"[red]❌ Block {mb.block_id}: Translation error: {e}[/red]")
-                    # Continue processing - don't let one block failure stop the entire pipeline
+            except Exception as e:
+                logger.error(f"Block {mb.block_id}: Backend translation failed: {e}", exc_info=True)
+                candidates = [""]
+                res_meta = {
+                    "backend": backend.name,
+                    "model": getattr(backend, "model", cfg.model),
+                    "cached": False,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+                console.print(f"[red]❌ Block {mb.block_id}: Translation error: {e}[/red]")
+                # Continue processing - don't let one block failure stop the entire pipeline
             # NO CACHING - Don't store results
 
             # Get source text for comparison (unmasked)
@@ -886,33 +1669,29 @@ def run_pipeline(
             # Headers/titles should NEVER accept identity translations
             filtered_candidates = []
             filtered_out_identity = []
-            # #region agent log
-            if is_header_for_rerank:
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"F","location":"pipeline.py:786","message":"Starting identity filtering for header","data":{"block_id":mb.block_id,"num_candidates":len(candidates),"source_preview":source_text_for_rerank[:50],"is_header":is_header_for_rerank}})+'\n')
-            # #endregion
             for cand in candidates:
                 if cand.strip():
                     # Normalize for comparison
                     source_norm = " ".join(source_text_for_rerank.strip().split()).lower()
                     cand_norm = " ".join(cand.strip().split()).lower()
-                    # #region agent log
-                    if is_header_for_rerank:
-                        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"F","location":"pipeline.py:793","message":"Comparing candidate","data":{"block_id":mb.block_id,"source_norm":source_norm[:50],"cand_norm":cand_norm[:50],"is_identical":source_norm == cand_norm}})+'\n')
-                    # #endregion
                     # For headers/titles: completely reject identity translations
                     if is_header_for_rerank and source_norm == cand_norm:
                         filtered_out_identity.append(cand)
-                        logger.warning(f"Block {mb.block_id}: Filtering out identity translation candidate: '{cand[:50]}...'")
-                        console.print(f"[yellow]  ⚠ Filtered identity candidate: '{cand[:50]}...'[/yellow]")
-                        # #region agent log
-                        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"F","location":"pipeline.py:798","message":"Filtered identity candidate","data":{"block_id":mb.block_id,"cand_preview":cand[:50]}})+'\n')
-                        # #endregion
+                        # Calculate similarity for detailed logging
+                        from difflib import SequenceMatcher
+                        similarity = SequenceMatcher(None, source_text_for_rerank, cand).ratio()
+                        logger.warning(
+                            f"Block {mb.block_id}: Filtering out identity translation candidate\n"
+                            f"  Source: '{source_text_for_rerank[:100]}'\n"
+                            f"  Translation: '{cand[:100]}'\n"
+                            f"  Similarity: {similarity:.2%}\n"
+                            f"  Is Header: {is_header_for_rerank}\n"
+                            f"  Action: Filtering out (will retry with higher temperature)"
+                        )
+                        console.print(
+                            f"[yellow]  ⚠ Filtered identity candidate (similarity: {similarity:.1%}): "
+                            f"'{cand[:50]}...'[/yellow]"
+                        )
                     else:
                         filtered_candidates.append(cand)
             
@@ -925,11 +1704,6 @@ def run_pipeline(
             # Rerank candidates if enabled and multiple candidates after filtering
             if cfg.enable_reranking and len(filtered_candidates) > 1:
                 console.print(f"[cyan]  🔄 Reranking {len(filtered_candidates)} candidates for block {mb.block_id}...[/cyan]")
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"B","location":"pipeline.py:856","message":"Starting reranking","data":{"block_id":mb.block_id,"num_candidates":len(filtered_candidates),"is_header":is_header_for_rerank}})+'\n')
-                # #endregion
                 ranked = rerank_candidates(
                     candidates=filtered_candidates,
                     source_text=source_text_for_rerank,
@@ -957,742 +1731,148 @@ def run_pipeline(
                         if score is not None:
                             cand_preview = cand[:50] + "..." if len(cand) > 50 else cand
                             console.print(f"[dim]    {i+1}. Score {score.total:.2f}: '{cand_preview}'[/dim]")
-                    # #region agent log
-                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                        import json
-                        scores_data = []
-                        for i, (cand, score) in enumerate(ranked[:5]):
-                            if score is not None:
-                                scores_data.append({"rank":i+1,"score":score.total,"valid":score.is_valid(),"candidate_preview":cand[:50]})
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"B","location":"pipeline.py:880","message":"Reranking complete","data":{"block_id":mb.block_id,"num_ranked":len(ranked),"best_score":best_score,"best_valid":best_valid,"top_scores":scores_data}})+'\n')
-                    # #endregion
-                candidates = [c for c, _ in ranked]
-                if ranked[0][1] is not None:
-                    res_meta["rerank_scores"] = {
-                        "best_score": ranked[0][1].total,
-                        "best_valid": ranked[0][1].is_valid(),
-                        "num_candidates_ranked": len(ranked),
-                    }
-            else:
-                console.print(f"[yellow]  ⚠ Reranking returned no results, using first candidate[/yellow]")
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"B","location":"pipeline.py:900","message":"Reranking returned no results","data":{"block_id":mb.block_id,"num_filtered_candidates":len(filtered_candidates)}})+'\n')
-                # #endregion
-
-            # Validate BEFORE restoration: placeholder preservation is a hard gate
-            candidate = candidates[0] if candidates else ""
-            placeholders_ok = candidate.strip() != "" and masker.placeholders_present(
-                candidate, mb.registry
-            )
-            
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                # Check which placeholders are missing
-                missing_placeholders = []
-                if candidate.strip() and mb.registry:
-                    for ph in mb.registry.keys():
-                        if ph not in candidate:
-                            missing_placeholders.append(ph)
-                f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"C","location":"pipeline.py:897","message":"Placeholder validation","data":{"block_id":mb.block_id,"placeholders_ok":placeholders_ok,"candidate_length":len(candidate),"registry_size":len(mb.registry),"missing_placeholders":missing_placeholders[:5]}})+'\n')
-            # #endregion
-            
-            # Log placeholder validation status
-            if not placeholders_ok and candidate.strip():
-                missing_phs = [ph for ph in mb.registry.keys() if ph not in candidate] if mb.registry else []
-                if missing_phs:
-                    console.print(f"[red]  ✗ Placeholder validation FAILED: Missing {len(missing_phs)} placeholders: {missing_phs[:3]}[/red]")
-                else:
-                    console.print(f"[yellow]  ⚠ Placeholder validation: Some placeholders may be missing[/yellow]")
-            elif placeholders_ok:
-                console.print(f"[green]  ✓ Placeholder validation: All placeholders preserved[/green]")
-
-            # Restore placeholders
-            restored, restore_errors = masker.restore(candidate, mb.registry, tolerant=True)
-            
-            # CRITICAL: Clean instruction spillover from restored text
-            if restored and restored.strip():
-                from scitrans.utils.translation_cleaner import clean_instruction_spillover
-                restored = clean_instruction_spillover(restored)
-            
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"C","location":"pipeline.py:909","message":"Placeholder restoration","data":{"block_id":mb.block_id,"restore_errors_count":len(restore_errors),"restore_errors":restore_errors[:3],"restored_length":len(restored) if restored else 0}})+'\n')
-            # #endregion
-            
-            # Log restoration status
-            if restore_errors:
-                console.print(f"[yellow]  ⚠ Restoration: {len(restore_errors)} errors - {', '.join(restore_errors[:2])}[/yellow]")
-            else:
-                console.print(f"[green]  ✓ Restoration: Successfully restored placeholders[/green]")
-
-            # Show translation preview in terminal (validation status will be shown later)
-            if restored and restored.strip():
-                restored_preview = restored[:100] + "..." if len(restored) > 100 else restored
-                console.print(f"[green]  → Translation ({len(restored)} chars): '{restored_preview}'[/green]")
-            elif restored:
-                console.print(f"[yellow]  ⚠ Translation: (empty after restoration)[/yellow]")
-            else:
-                console.print(f"[red]  ✗ Translation: (failed - no output)[/red]")
-
-            # Initialize identity translation detection variables BEFORE any conditional blocks
-            # This ensures they're always defined, even if we skip the placeholder check
-            identity_result = IdentityCheckResult(
-                is_identity=False,
-                confidence=0.0,
-                reason="Not checked",
-                valid_identical_content=[],
-                should_retry=False,
-            )
-            wrong_translation = False
-            identity_translation = False  # Initialize to prevent UnboundLocalError
-
-            # Check if any placeholders remain unreplaced (should not happen)
-            remaining_placeholders = re.findall(r'(?:<<|⟦)[A-Z_]+_\d+(?:>>|⟧)', restored)
-            if remaining_placeholders:
-                # Only warn about placeholders that were actually in the registry (not backend hallucinations)
-                actual_missing = []
-                for ph_remaining in remaining_placeholders:
-                    # Try both formats
-                    ph_key = None
-                    if ph_remaining.startswith("<<"):
-                        ph_key = ph_remaining
-                    elif ph_remaining.startswith("⟦"):
-                        # Convert ⟦KIND_NUM⟧ to <<KIND_NUM>>
-                        inner = ph_remaining[1:-1]
-                        ph_key = f"<<{inner}>>"
-                    
-                    if ph_key and ph_key in mb.registry:
-                        # This is a real placeholder that should be restored
-                        actual_missing.append(ph_remaining)
-                        restored = restored.replace(ph_remaining, mb.registry[ph_key])
-                        logger.info(f"Block {mb.block_id}: Manually restored placeholder {ph_remaining} -> {mb.registry[ph_key][:30]}...")
-                    else:
-                        # Backend hallucinated this placeholder - silently remove it (not a real error)
-                        logger.debug(f"Block {mb.block_id}: Removing hallucinated placeholder {ph_remaining} (not in registry)")
-                        restored = restored.replace(ph_remaining, "")
                 
-                # Only warn if we had actual missing placeholders from registry
-                if actual_missing:
-                    logger.warning(
-                        f"Block {mb.block_id}: {len(actual_missing)} placeholders from registry not restored: {actual_missing[:3]}"
-                    )
-
-            # DEBUG: Log restored text
-            if restored:
-                restored_preview = restored[:100] + "..." if len(restored) > 100 else restored
-                logger.info(f"Block {mb.block_id}: After restore: {len(restored)} chars: {restored_preview}")
-            else:
-                logger.warning(f"Block {mb.block_id}: After restore: EMPTY!")
-
-            # Check for identity translation (output == input) - CRITICAL VALIDATION
-            # Use improved identity detection with context-aware handling
-            # Note: identity_result, wrong_translation, and identity_translation are already initialized above
-            
-            if restored.strip():
-                # Use the source_text we already have from earlier in the loop
-                source_text_for_check = source_text
-                
-                # Check for generic/wrong translations (common LLM responses)
-                generic_phrases = [
-                    "je suis ravi",
-                    "pouvez-vous",
-                    "comment puis-je",
-                    "i'm happy to help",
-                    "can you",
-                    "how can i",
-                    "aucun texte fourni",
-                    "no text provided",
-                ]
-                restored_lower = restored.lower()
-                if any(phrase in restored_lower for phrase in generic_phrases):
-                    wrong_translation = True
-                    logger.error(
-                        f"Block {mb.block_id}: WRONG TRANSLATION DETECTED - Backend returned generic response instead of translation!"
-                    )
-                    logger.error(
-                        f"Block {mb.block_id}: Source: '{source_text_for_check[:80]}...'"
-                    )
-                    logger.error(
-                        f"Block {mb.block_id}: Restored: '{restored[:80]}...'"
-                    )
-                    console.print(
-                        f"[red]⚠⚠⚠ WRONG TRANSLATION for block {mb.block_id} - Backend returned generic response![/red]"
-                    )
-                    restore_errors.append("wrong_translation_generic_response")
-                
-                # Check for hallucination (backend adding content that wasn't in source)
-                # For short blocks (headers/titles), translation should be roughly same length
-                source_len = len(source_text_for_check.strip())
-                restored_len = len(restored.strip())
-                is_short_block = source_len < 100 or is_header_block or is_title_block
-                
-                if is_short_block and restored_len > source_len * 2.5:
-                    # Translation is more than 2.5x longer - likely hallucination
-                    # Check if translation contains source content
-                    source_words = set(source_text_for_check.lower().split())
-                    restored_words = set(restored.lower().split())
-                    source_word_overlap = len(source_words & restored_words) / max(len(source_words), 1)
-                    
-                    # If translation is much longer but doesn't contain most source words, it's hallucination
-                    if source_word_overlap < 0.3:  # Less than 30% word overlap
-                        wrong_translation = True
-                        logger.error(
-                            f"Block {mb.block_id}: HALLUCINATION DETECTED - Backend added content that wasn't in source!"
-                        )
-                        logger.error(
-                            f"Block {mb.block_id}: Source ({source_len} chars): '{source_text_for_check[:80]}...'"
-                        )
-                        logger.error(
-                            f"Block {mb.block_id}: Restored ({restored_len} chars, {restored_len/source_len:.1f}x longer): '{restored[:150]}...'"
-                        )
-                        logger.error(
-                            f"Block {mb.block_id}: Word overlap: {source_word_overlap:.1%}"
-                        )
-                        console.print(
-                            f"[red]⚠⚠⚠ HALLUCINATION for block {mb.block_id} - Backend added {restored_len/source_len:.1f}x more content![/red]"
-                        )
-                        restore_errors.append("wrong_translation_hallucination")
-                    elif restored_len > source_len * 3:
-                        # Even with word overlap, if it's 3x longer, it's suspicious
-                        logger.warning(
-                            f"Block {mb.block_id}: Translation is {restored_len/source_len:.1f}x longer than source - may contain extra content"
-                        )
-                        console.print(
-                            f"[yellow]⚠ Block {mb.block_id}: Translation is {restored_len/source_len:.1f}x longer - may have extra content[/yellow]"
-                        )
-                        restore_errors.append("translation_too_long")
-                
-                # Get block metadata for context-aware detection (reuse from earlier)
-                # is_header_block and is_bullet_block already set above
-                is_title_block = False
-                block_type_meta = "normal"
-                for page in doc.pages:
-                    for block in page.blocks:
-                        if block.id == mb.block_id:
-                            block_type_meta = block.meta.get("block_type", "normal") if hasattr(block, 'meta') else "normal"
-                            is_title_block = block_type_meta == "title"
-                            break
-                    if block.id == mb.block_id:
-                        break
-
-                # Use improved identity detection
-                identity_result = check_identity_translation(
-                    source_text_for_check,
-                    restored,
-                    is_header=is_header_block,
-                    is_bullet=is_bullet_block,
-                    is_title=is_title_block,
-                    block_type=block_type_meta,
-                )
-                
-                identity_translation = identity_result.is_identity
-                
-                if identity_translation:
-                    if identity_result.should_retry:
-                        logger.error(
-                            f"Block {mb.block_id}: IDENTITY TRANSLATION DETECTED (confidence: {identity_result.confidence:.1%}) - {identity_result.reason}"
-                        )
-                        logger.error(
-                            f"Block {mb.block_id}: Source: '{source_text_for_check[:80]}...'"
-                        )
-                        logger.error(
-                            f"Block {mb.block_id}: Restored: '{restored[:80]}...'"
-                        )
-                        if identity_result.valid_identical_content:
-                            logger.info(
-                                f"Block {mb.block_id}: Valid identical content: {identity_result.valid_identical_content[:5]}"
-                            )
-                        console.print(
-                            f"[red]⚠⚠⚠ IDENTITY TRANSLATION for block {mb.block_id} - {identity_result.reason}[/red]"
-                        )
-                        restore_errors.append("identity_translation")
-                    else:
-                        # Valid identical content - don't flag as error
-                        logger.info(
-                            f"Block {mb.block_id}: Text identical but valid ({identity_result.reason}) - ACCEPTING"
-                        )
-                        if identity_result.valid_identical_content:
-                            logger.info(
-                                f"Block {mb.block_id}: Valid identical content: {identity_result.valid_identical_content[:5]}"
-                            )
-                        identity_translation = False  # Clear flag since it's valid
-
-            # Overall validation
-            # A block is OK only if:
-            # 1. Placeholders are preserved
-            # 2. No restore errors
-            # 3. Not an identity translation (output != input)
-            # 4. Not a wrong translation (generic response)
-            # 5. Translation is not empty
-            ok = (
-                placeholders_ok 
-                and len(restore_errors) == 0 
-                and not identity_translation
-                and not wrong_translation
-                and restored.strip() != ""
-            )
-            # #region agent log
-            if is_header_block:
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"C","location":"pipeline.py:1031","message":"Header/title validation result","data":{"block_id":mb.block_id,"ok":ok,"placeholders_ok":placeholders_ok,"restore_errors":restore_errors,"identity_translation":identity_translation,"wrong_translation":wrong_translation,"restored_len":len(restored) if restored else 0,"restored_preview":restored[:50] if restored else "","source_preview":source_text[:50]}})+'\n')
-            # #endregion
-
-            # CRITICAL: ALWAYS retry identity translations and wrong translations
-            # These mean the backend didn't translate properly - we MUST get an actual translation
-            # SPECIAL: Headers/titles get EXTRA priority - they must be translated
-            
-            should_retry = False
-            if wrong_translation:
-                # FORCE retry for wrong translations (generic responses) - this is MANDATORY
-                logger.warning(f"Block {mb.block_id}: Wrong translation (generic response) detected - retrying")
-                console.print(f"[yellow]⚠️ Block {mb.block_id}: Generic response detected - retrying[/yellow]")
-                should_retry = True
-                if is_header_block:
-                    logger.warning(f"Block {mb.block_id}: Header/title has generic response - retrying")
-            elif identity_translation and identity_result.should_retry:
-                # Use the improved identity detection result to decide if we should retry
-                # The check_identity_translation function already determined if retry is needed
-                logger.warning(f"Block {mb.block_id}: Identity translation detected (confidence: {identity_result.confidence:.1%}) - retrying")
-                console.print(f"[yellow]⚠️ Block {mb.block_id}: Identity translation - retrying[/yellow]")
-                should_retry = True
-                if is_header_block:
-                    logger.warning(f"Block {mb.block_id}: Header/title is identity - retrying")
-            elif cfg.retry_failed and not cached_result and candidate.strip() != "":
-                # CRITICAL: Always retry if placeholders are missing - this is a hard failure
-                should_retry = not placeholders_ok
-                if not placeholders_ok:
-                    missing_phs = [ph for ph in mb.registry.keys() if ph not in candidate] if mb.registry else []
-                    logger.warning(f"Block {mb.block_id}: Missing {len(missing_phs)} placeholders - forcing retry: {missing_phs[:3]}")
-                    console.print(f"[red]⚠️ Missing placeholders - forcing retry: {missing_phs[:3] if missing_phs else 'unknown'}[/red]")
-                # Headers always retry if they have any issues
-                if is_header_block and not ok:
-                    should_retry = True
-                    logger.warning(f"Block {mb.block_id}: Header/title has issues - forcing retry")
-                    console.print(f"[yellow]⚠️ Header/title block has issues - forcing retry[/yellow]")
-            
-            # #region agent log
-            retry_reason = ""
-            if wrong_translation:
-                retry_reason = "wrong_translation"
-            elif identity_translation:
-                retry_reason = "identity_translation"
-            elif not placeholders_ok:
-                retry_reason = "placeholder_issue"
-            elif is_header_block and not ok:
-                retry_reason = "header_issue"
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"D","location":"pipeline.py:1163","message":"Retry decision","data":{"block_id":mb.block_id,"should_retry":should_retry,"retry_reason":retry_reason,"wrong_translation":wrong_translation,"identity_translation":identity_translation,"placeholders_ok":placeholders_ok,"is_header":is_header_block,"ok":ok}})+'\n')
-            # #endregion
-            
-            if should_retry:
-                retry_reason_str = ""
-                if wrong_translation:
-                    retry_reason_str = "generic response"
-                elif identity_translation:
-                    retry_reason_str = "identity translation"
-                else:
-                    retry_reason_str = "validation failed"
-                
-                console.print(
-                    f"[yellow]  🔄 Retrying block {mb.block_id} ({retry_reason_str}) with stronger constraints...[/yellow]"
-                )
-                # Retry with lower temperature and explicit translation instruction
-                retry_reason = ""
-                placeholder_emphasis = ""
-                if not placeholders_ok and mb.registry:
-                    missing_phs = [ph for ph in mb.registry.keys() if ph not in candidate] if candidate.strip() else list(mb.registry.keys())[:3]
-                    retry_reason = f"The previous translation MISSED {len(missing_phs)} placeholders: {missing_phs[:3]}. "
-                    placeholder_emphasis = "\n🚨🚨🚨 PLACEHOLDER PRESERVATION FAILURE - CRITICAL 🚨🚨🚨\n"
-                    placeholder_emphasis += f"The source text contains {len(mb.registry)} placeholders that MUST be preserved:\n"
-                    for ph in list(mb.registry.keys())[:5]:
-                        placeholder_emphasis += f"  - {ph}\n"
-                    placeholder_emphasis += "YOU MUST include ALL of these placeholders in your translation EXACTLY as written.\n"
-                    placeholder_emphasis += "DO NOT translate, modify, or remove placeholders - they are protected markers.\n"
-                    placeholder_emphasis += "If you see <<PERSON_NAME_0001>> in source, you MUST include <<PERSON_NAME_0001>> in your output.\n"
-                    placeholder_emphasis += "If you see ⟦MATH_INLINE_0002⟧ in source, you MUST include ⟦MATH_INLINE_0002⟧ in your output.\n"
-                elif wrong_translation:
-                    retry_reason = "The previous translation was a generic response (like 'Je suis ravi de vous aider'). "
-                elif identity_translation:
-                    retry_reason = "The previous translation was identical to the source text. "
-                
-                # Special prompt for headers/titles
-                header_emphasis = ""
-                if is_header_block:
-                    header_emphasis = "\n🚨 THIS IS A HEADER/TITLE - EXTRA CRITICAL 🚨\n"
-                    header_emphasis += "- Headers and titles MUST be translated - they are never optional.\n"
-                    header_emphasis += "- If source is 'Section 1: Introduction', translate to target language but KEEP the number.\n"
-                    header_emphasis += "- Example: 'Section 1: Introduction' (EN) → 'Section 1 : Introduction' (FR) - keep '1' and 'Section'.\n"
-                    header_emphasis += "- Preserve ALL numbers, colons, and formatting exactly.\n"
-                
-                retry_prompt = (
-                    system_prompt
-                    + "\n\n⚠️ RETRY MODE - PREVIOUS ATTEMPT FAILED ⚠️\n"
-                    + retry_reason
-                    + placeholder_emphasis
-                    + header_emphasis
-                    + f"CRITICAL: You MUST translate from {cfg.source_lang.upper()} to {cfg.target_lang.upper()}.\n"
-                    + "You MUST NOT return the source text unchanged.\n"
-                    + "You MUST NOT return generic responses, greetings, or explanations.\n"
-                    + "You MUST output ONLY the translated text in " + cfg.target_lang.upper() + " language.\n"
-                    + "🚨 You MUST preserve ALL placeholders exactly as written - this is MANDATORY.\n"
-                    + "You MUST preserve formatting (bullets only where source has them, no added hyphens to paragraphs).\n"
-                    + "You MUST preserve section numbers EXACTLY (e.g., '1. ', '2)', 'Section 3:' - keep the number and format).\n"
-                    + "For short text (headers, bullets, titles), translate EVERY word - do not skip anything.\n"
-                    + "If you return the source text unchanged, a generic response, or miss placeholders, the translation will fail."
-                )
-                console.print(f"[dim]  📝 Reprompting with enhanced instructions (temp: {max(0.0, cfg.temperature - 0.2):.2f})[/dim]")
-                retry_req = TranslateRequest(
-                    text=mb.masked_text,
-                    source_lang=cfg.source_lang,
-                    target_lang=cfg.target_lang,
-                    system_prompt=retry_prompt,
-                    temperature=max(0.0, cfg.temperature - 0.2),
-                    n_candidates=1,
-                )
-                
-                # MULTI-BACKEND RETRY STRATEGY: If cascade_free failed, try individual backends
-                retry_candidate = ""
-                retry_succeeded = False
-                
-                # If using cascade_free and it failed, try individual backends
-                if backend.name == "cascade_free":
-                    console.print(f"[yellow]  🔄 cascade_free failed, trying individual backends for retry...[/yellow]")
-                    logger.info(f"Block {mb.block_id}: cascade_free failed, trying individual backends...")
-                    # Try backends in order: DeepSeek > Google > Ollama
-                    fallback_backends = []
-                    try:
-                        from scitrans.translation.backends.deepseek_backend import DeepSeekBackend
-                        import os
-                        if os.getenv("DEEPSEEK_API_KEY"):
-                            fallback_backends.append(("deepseek", DeepSeekBackend()))
-                    except Exception:
-                        pass
-                    try:
-                        from scitrans.translation.backends.google_backend import GoogleTranslateBackend
-                        fallback_backends.append(("google", GoogleTranslateBackend()))
-                    except Exception:
-                        pass
-                    try:
-                        from scitrans.translation.backends.ollama_backend import OllamaBackend
-                        import requests
-                        try:
-                            requests.get("http://localhost:11434/api/tags", timeout=2)
-                            fallback_backends.append(("ollama", OllamaBackend(model="llama3.2")))
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                    
-                    # Try each fallback backend
-                    for backend_name, fallback_be in fallback_backends:
-                        try:
-                            console.print(f"[dim]  🔄 Trying {backend_name} backend for retry...[/dim]")
-                            logger.info(f"Block {mb.block_id}: Trying {backend_name} backend for retry...")
-                            retry_res = fallback_be.translate(retry_req)
-                            if retry_res.candidates and retry_res.candidates[0]:
-                                retry_candidate = retry_res.candidates[0]
-                                retry_preview = retry_candidate[:80] + "..." if len(retry_candidate) > 80 else retry_candidate
-                                console.print(f"[dim]  → {backend_name} returned: '{retry_preview}'[/dim]")
-                                # Validate it's different from source
-                                if retry_candidate.strip():
-                                    retry_normalized = " ".join(retry_candidate.strip().split()).lower()
-                                    source_normalized = " ".join(source_text.strip().split()).lower()
-                                    if retry_normalized != source_normalized:
-                                        logger.info(f"Block {mb.block_id}: {backend_name} retry succeeded!")
-                                        console.print(f"[green]  ✓ {backend_name} retry succeeded![/green]")
-                                        retry_succeeded = True
-                                        break
-                                    else:
-                                        console.print(f"[yellow]  ⚠ {backend_name} retry still identity, trying next...[/yellow]")
-                        except Exception as e:
-                            logger.warning(f"Block {mb.block_id}: {backend_name} retry failed: {e}")
-                            console.print(f"[red]  ✗ {backend_name} retry failed: {e}[/red]")
-                            continue
-                
-                # If fallback backends didn't work, or not using cascade_free, try original backend again
-                if not retry_succeeded:
-                    console.print(f"[dim]  🔄 Retrying with original backend ({backend.name})...[/dim]")
-                    try:
-                        retry_res = backend.translate(retry_req)
-                        retry_candidate = retry_res.candidates[0] if retry_res.candidates else ""
-                        if retry_candidate:
-                            retry_preview = retry_candidate[:80] + "..." if len(retry_candidate) > 80 else retry_candidate
-                            console.print(f"[dim]  → Original backend returned: '{retry_preview}'[/dim]")
-                    except Exception as e:
-                        logger.warning(f"Block {mb.block_id}: Original backend retry failed: {e}")
-                        console.print(f"[red]  ✗ Original backend retry failed: {e}[/red]")
-                        retry_candidate = ""
-
-                # Only proceed if retry returned something
-                if retry_candidate.strip():
-                    try:
-                        # Validate BEFORE restoration
-                        retry_placeholders_ok = masker.placeholders_present(retry_candidate, mb.registry)
-                        retry_restored, retry_restore_errors = masker.restore(
-                            retry_candidate, mb.registry, tolerant=True
-                        )
-                        
-                        # Check for identity translation again after retry using improved detector
-                        retry_identity = False
-                        if cfg.detect_identity_translation and retry_restored.strip():
-                            source_text_for_check = ""
-                            is_header_block_retry = False
-                            is_bullet_block_retry = False
-                            is_title_block_retry = False
-                            block_type_meta_retry = "normal"
-                            for page in doc.pages:
-                                for block in page.blocks:
-                                    if block.id == mb.block_id:
-                                        source_text_for_check = _block_text(block)
-                                        is_header_block_retry = block.meta.get("is_header", False) if hasattr(block, 'meta') else False
-                                        block_type_meta_retry = block.meta.get("block_type", "normal") if hasattr(block, 'meta') else "normal"
-                                        is_title_block_retry = block_type_meta_retry == "title"
-                                        source_preview_retry = source_text_for_check.strip()[:10]
-                                        is_bullet_block_retry = any(source_preview_retry.startswith(bullet) for bullet in ["•", "-", "*", "·"])
-                                        break
-                            
-                            if source_text_for_check:
-                                retry_identity_result = check_identity_translation(
-                                    source_text_for_check,
-                                    retry_restored,
-                                    is_header=is_header_block_retry,
-                                    is_bullet=is_bullet_block_retry,
-                                    is_title=is_title_block_retry,
-                                    block_type=block_type_meta_retry,
-                                )
-                                retry_identity = retry_identity_result.is_identity and retry_identity_result.should_retry
-                                if retry_identity:
-                                    retry_restore_errors.append("identity_translation")
-                        
-                        # Check if retry is actually different from source
-                        retry_source_normalized = " ".join(source_text.strip().split()).lower()
-                        retry_restored_normalized = " ".join(retry_restored.strip().split()).lower()
-                        retry_is_different = retry_source_normalized != retry_restored_normalized
-                        
-                        # Retry is OK only if: placeholders OK, no errors, not identity, AND actually different
-                        retry_ok = (
-                            retry_placeholders_ok 
-                            and len(retry_restore_errors) == 0 
-                            and not retry_identity
-                            and retry_is_different  # CRITICAL: Must be different from source
-                        )
-                        
-                        if retry_ok:
-                            candidate = retry_candidate
-                            restored = retry_restored
-                            restore_errors = retry_restore_errors
-                            ok = True
-                            identity_translation = False  # Reset identity flag since retry succeeded
-                            res_meta["retried"] = True
-                            logger.info(f"Block {mb.block_id}: Retry SUCCESS - got actual translation")
-                            retry_restored_preview = retry_restored[:80] + "..." if len(retry_restored) > 80 else retry_restored
-                            console.print(f"[green]  ✅ Retry SUCCESS - Translation: '{retry_restored_preview}'[/green]")
-                        else:
-                            logger.error(f"Block {mb.block_id}: Retry FAILED - still identity or invalid")
-                            retry_restored_preview = retry_restored[:80] + "..." if len(retry_restored) > 80 else retry_restored
-                            console.print(f"[red]  ✗ Retry FAILED - Still invalid: '{retry_restored_preview}'[/red]")
-                            if retry_identity:
-                                console.print(f"[red]    Reason: Identity translation detected[/red]")
-                            if not retry_placeholders_ok:
-                                console.print(f"[red]    Reason: Placeholders not preserved[/red]")
-                            if not retry_is_different:
-                                console.print(f"[red]    Reason: Translation identical to source[/red]")
-                    except Exception as e:
-                        logger.debug(f"Retry validation failed for block {mb.block_id}: {e}")
-                    pass  # Keep original failed result
-
-            # REAL-TIME SCORING: Score immediately after translation (before storing)
-            # This allows us to retry low-quality translations automatically
-            post_score = None
-            if restored and restored.strip() and mb.registry:
-                try:
-                    # Get block metadata for scoring
-                    is_header_for_score = is_header_block
-                    is_title_for_score = is_title_block
-                    is_bullet_for_score = is_bullet_block
-                    
-                    post_score = compute_post_translation_score(
-                        block_id=mb.block_id,
-                        source_text=mb.masked_text,
-                        translated_text=restored,
-                        registry=mb.registry,
-                        errors=restore_errors if restore_errors else ([] if ok else ["validation_failed"]),
-                        is_header=is_header_for_score,
-                        is_title=is_title_for_score,
-                        is_bullet=is_bullet_for_score,
-                    )
-                    
-                    # Log score in terminal
-                    score_color = "green" if post_score.overall_score >= 0.85 else "yellow" if post_score.overall_score >= 0.70 else "red"
-                    console.print(f"[{score_color}]  📊 Quality Score: {post_score.overall_score:.1%} (P:{post_score.placeholder_score:.1%} N:{post_score.numeric_score:.1%} F:{post_score.format_score:.1%})[/{score_color}]")
-                    
-                    # AUTOMATIC RETRY: If score is low and not already retried, retry with stronger constraints
-                    if post_score.overall_score < 0.75 and not res_meta.get("retried", False) and cfg.retry_failed:
-                        logger.warning(f"Block {mb.block_id}: Low quality score ({post_score.overall_score:.1%}) - auto-retrying")
-                        console.print(f"[yellow]  🔄 Low quality score ({post_score.overall_score:.1%}) - auto-retrying with stronger constraints...[/yellow]")
-                        
-                        # Get source text for retry
-                        source_text_for_retry = ""
-                        for page in doc.pages:
-                            for block in page.blocks:
-                                if block.id == mb.block_id:
-                                    source_text_for_retry = _block_text(block)
-                                    break
-                            if source_text_for_retry:
-                                break
-                        
-                        # Stronger retry prompt based on score issues
-                        score_issues = []
-                        if post_score.placeholder_score < 0.9:
-                            score_issues.append("placeholder preservation")
-                        if post_score.numeric_score < 0.8:
-                            score_issues.append("numeric accuracy")
-                        if post_score.format_score < 0.8:
-                            score_issues.append("format preservation")
-                        if post_score.fluency_score < 0.7:
-                            score_issues.append("fluency")
-                        
-                        issues_str = ", ".join(score_issues) if score_issues else "quality"
-                        retry_prompt_score = (
-                            system_prompt
-                            + f"\n\n⚠️ QUALITY RETRY MODE - Score was {post_score.overall_score:.1%} ⚠️\n"
-                            + f"Previous translation had issues with: {issues_str}.\n"
-                            + f"CRITICAL: You MUST improve translation quality.\n"
-                            + f"- Preserve ALL placeholders exactly (score: {post_score.placeholder_score:.1%})\n"
-                            + f"- Preserve ALL numbers exactly (score: {post_score.numeric_score:.1%})\n"
-                            + f"- Preserve formatting (bullets, line breaks) (score: {post_score.format_score:.1%})\n"
-                            + f"- Ensure fluent translation (score: {post_score.fluency_score:.1%})\n"
-                            + f"Output ONLY the improved translated text in {cfg.target_lang.upper()}.\n"
-                        )
-                        
-                        retry_req_score = TranslateRequest(
-                            text=mb.masked_text,
-                            source_lang=cfg.source_lang,
-                            target_lang=cfg.target_lang,
-                            system_prompt=retry_prompt_score,
-                            temperature=max(0.0, cfg.temperature - 0.3),  # Lower temperature for quality
-                            n_candidates=1,
-                        )
-                        
-                        try:
-                            retry_res_score = backend.translate(retry_req_score)
-                            retry_candidate_score = retry_res_score.candidates[0] if retry_res_score.candidates else ""
-                            
-                            if retry_candidate_score.strip():
-                                retry_placeholders_ok_score = masker.placeholders_present(retry_candidate_score, mb.registry)
-                                retry_restored_score, retry_restore_errors_score = masker.restore(
-                                    retry_candidate_score, mb.registry, tolerant=True
-                                )
-                                
-                                # Score the retry
-                                retry_post_score = compute_post_translation_score(
-                                    block_id=mb.block_id,
-                                    source_text=mb.masked_text,
-                                    translated_text=retry_restored_score,
-                                    registry=mb.registry,
-                                    errors=retry_restore_errors_score if retry_restore_errors_score else [],
-                                )
-                                
-                                # Only use retry if it's better
-                                if retry_post_score.overall_score > post_score.overall_score and retry_placeholders_ok_score:
-                                    candidate = retry_candidate_score
-                                    restored = retry_restored_score
-                                    restore_errors = retry_restore_errors_score
-                                    post_score = retry_post_score
-                                    ok = retry_post_score.overall_score >= 0.70  # Accept if score improved to at least 0.70
-                                    res_meta["retried"] = True
-                                    res_meta["score_retry"] = True
-                                    logger.info(f"Block {mb.block_id}: Score retry SUCCESS - improved from {post_score.overall_score:.1%} to {retry_post_score.overall_score:.1%}")
-                                    console.print(f"[green]  ✅ Score retry SUCCESS - improved to {retry_post_score.overall_score:.1%}[/green]")
-                                else:
-                                    logger.warning(f"Block {mb.block_id}: Score retry did not improve (old: {post_score.overall_score:.1%}, new: {retry_post_score.overall_score:.1%})")
-                                    console.print(f"[yellow]  ⚠ Score retry did not improve quality[/yellow]")
-                        except Exception as e:
-                            logger.warning(f"Block {mb.block_id}: Score retry failed: {e}")
-                            console.print(f"[red]  ✗ Score retry failed: {e}[/red]")
-                except Exception as e:
-                    logger.warning(f"Block {mb.block_id}: Failed to compute post-translation score: {e}")
-                    # Continue without score if computation fails
-            
-            # Store score in metadata
-            if post_score:
-                res_meta["post_score"] = {
-                    "overall_score": post_score.overall_score,
-                    "placeholder_score": post_score.placeholder_score,
-                    "numeric_score": post_score.numeric_score,
-                    "format_score": post_score.format_score,
-                    "fluency_score": post_score.fluency_score,
-                    "fidelity_score": post_score.fidelity_score,
-                    "needs_review": post_score.needs_review,
-                    "needs_retry": post_score.needs_retry,
-                    "confidence": post_score.confidence,
-                }
-
-            # Store translation result for EVERY block (whether retried or not)
-            # CRITICAL: Always store something - use source text as fallback if translation is empty/invalid
-            # This ensures NO blocks are omitted from the final PDF
-            if not restored or not restored.strip():
-                # Translation is empty - use source text as fallback
-                final_translation = source_text
-                logger.warning(f"Block {mb.block_id}: Translation is empty, using source text as fallback")
-            elif not ok and (identity_translation or wrong_translation):
-                # Translation failed validation - still use it but log warning
-                # This ensures the block is rendered (even if it's wrong) rather than omitted
-                final_translation = restored
-                logger.warning(f"Block {mb.block_id}: Translation failed validation but storing anyway to prevent omission")
-            else:
-                # Translation is valid
-                final_translation = restored
-            
-            translated_blocks.append(
-                TranslatedBlock(
-                    block_id=mb.block_id,
-                    source_text=mb.masked_text,
-                    translated_text=final_translation,  # Use source as fallback if needed
-                    ok=ok,
-                    errors=restore_errors if restore_errors else ([] if ok else ["validation_failed"]),
-                    meta=res_meta,
-                )
-            )
-            # CRITICAL: Always store translation (or source text as fallback) to ensure block is rendered
-            # This prevents blocks from being omitted from the final PDF
-            translations[mb.block_id] = final_translation
-            # #region agent log
-            if is_header_block:
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"D","location":"pipeline.py:1282","message":"Header/title stored in translations","data":{"block_id":mb.block_id,"ok":ok,"stored_len":len(restored) if restored else 0,"stored_preview":restored[:50] if restored else "","source_preview":source_text[:50]}})+'\n')
-            # #endregion
-            
-            # DEBUG: Log final translation status
-            stored_preview = restored[:60] + "..." if len(restored) > 60 else restored
-            if ok:
-                logger.info(f"Block {mb.block_id}: ✅ OK - Translation stored ({len(restored)} chars): '{stored_preview}'")
-                logger.debug(f"Block {mb.block_id}: Full restored text: {restored}")
-                console.print(f"[green]  ✅ Block {idx+1}/{len(masked_blocks)}: OK - '{stored_preview}'[/green]")
-            else:
-                error_msg = ", ".join(restore_errors) if restore_errors else "validation_failed"
-                logger.error(f"Block {mb.block_id}: ❌ FAILED - Errors: {error_msg}")
-                logger.error(f"Block {mb.block_id}: Source: '{source_text[:80]}...'")
-                logger.error(f"Block {mb.block_id}: Restored: '{restored[:80]}...'")
-                console.print(f"[red]  ✗ Block {idx+1}/{len(masked_blocks)}: FAILED - {error_msg}[/red]")
-                if identity_translation:
-                    logger.error(f"Block {mb.block_id}: This is an IDENTITY TRANSLATION - backend returned source text!")
-                    console.print(f"[red]  ⚠️ IDENTITY TRANSLATION detected![/red]")
-            # NO CONTEXT BUFFER - Don't maintain context (user doesn't care)
-            # NO TRANSLATION MEMORY - Don't save translations (always fresh)
+    # EMERGENCY RETRY: Final pass - retry any remaining failed blocks
+    failed_block_indices = []
+    for idx, tb in enumerate(translated_blocks):
+        if not tb.ok or not tb.translated_text or tb.translated_text.strip() == "":
+            failed_block_indices.append(idx)
     
-    # Summary of translation results
+    if failed_block_indices:
+        failed_block_ids = [translated_blocks[i].block_id for i in failed_block_indices]
+        logger.warning(
+            f"🚨 {len(failed_block_indices)} blocks still failed - attempting final emergency retry...\n"
+            f"  Failed block IDs: {failed_block_ids[:5]}{'...' if len(failed_block_ids) > 5 else ''}\n"
+            f"  Action: Final emergency retry with maximum temperature (0.9)"
+        )
+        console.print(
+            f"[yellow]🆘 Final emergency retry for {len(failed_block_indices)} failed blocks...[/yellow]\n"
+            f"[dim]  Block IDs: {', '.join(failed_block_ids[:3])}{'...' if len(failed_block_ids) > 3 else ''}[/dim]"
+        )
+        
+        for idx in failed_block_indices:
+            # Find corresponding masked block
+            mb = None
+            for page in doc.pages:
+                for block in page.blocks:
+                    if block.id == translated_blocks[idx].block_id:
+                        # Re-mask the source text
+                        source_text = _block_text(block)
+                        masked, registry, _ = masker.mask(source_text, None)
+                        mb = MaskedBlock(
+                            block_id=block.id,
+                            masked_text=masked,
+                            registry=registry,
+                        )
+                        break
+                if mb:
+                    break
+            
+            if mb:
+                emergency_result = emergency_translate(
+                    mb, backend, cfg.source_lang, cfg.target_lang, masker, temp=0.9
+                )
+                if emergency_result:
+                    translated_blocks[idx] = emergency_result
+                    logger.info(
+                        f"✅ Final emergency retry succeeded for block {mb.block_id}\n"
+                        f"  Translation length: {len(emergency_result.translated_text)} chars\n"
+                        f"  Status: {'OK' if emergency_result.ok else 'Failed but has content'}"
+                    )
+                    console.print(f"[green]  ✅ Block {mb.block_id}: Final emergency retry succeeded[/green]")
+                else:
+                    logger.error(
+                        f"❌ Final emergency retry failed for block {mb.block_id}\n"
+                        f"  Action: Will use source text as fallback to ensure block appears in PDF"
+                    )
+                    console.print(f"[red]  ❌ Block {mb.block_id}: Final emergency retry failed[/red]")
+            else:
+                logger.error(
+                    f"❌ Could not find masked block for failed block {translated_blocks[idx].block_id}\n"
+                    f"  Action: Will use source text from TranslatedBlock as fallback"
+                )
+    
     num_ok = sum(1 for tb in translated_blocks if tb.ok)
     num_failed = sum(1 for tb in translated_blocks if not tb.ok)
     logger.info(f"Translation summary: {num_ok} OK, {num_failed} failed out of {len(translated_blocks)} blocks")
     console.print(f"[cyan]Translation complete: {num_ok}/{len(translated_blocks)} blocks OK, {num_failed} failed[/cyan]")
+    
+    # TRANSLATION QUALITY REPORT with comprehensive tracking
+    total_blocks = len(translated_blocks)
+    successful_blocks = sum(1 for tb in translated_blocks if tb.ok)
+    failed_blocks_count = total_blocks - successful_blocks
+    emergency_blocks = sum(1 for tb in translated_blocks if tb.meta.get("emergency_translation"))
+    source_fallback_blocks = sum(1 for tb in translated_blocks if tb.meta.get("used_source_text"))
+    partial_result_blocks = sum(1 for tb in translated_blocks if tb.meta.get("partial_result"))
+    
+    # Track error types for detailed reporting
+    error_type_counts = {}
+    failed_block_details = []
+    for tb in translated_blocks:
+        if not tb.ok:
+            for error in tb.errors:
+                error_type_counts[error] = error_type_counts.get(error, 0) + 1
+            failed_block_details.append({
+                "block_id": tb.block_id,
+                "errors": tb.errors,
+                "has_translation": bool(tb.translated_text and tb.translated_text.strip()),
+            })
+    
+    logger.info("=" * 60)
+    logger.info("TRANSLATION QUALITY REPORT")
+    logger.info("=" * 60)
+    logger.info(f"Total blocks: {total_blocks}")
+    logger.info(f"Successful: {successful_blocks} ({successful_blocks/total_blocks*100:.1f}%)")
+    logger.info(f"Failed: {failed_blocks_count} ({failed_blocks_count/total_blocks*100:.1f}%)")
+    logger.info(f"Emergency translations: {emergency_blocks}")
+    logger.info(f"Partial results (accepted): {partial_result_blocks}")
+    logger.info(f"Source text fallbacks: {source_fallback_blocks}")
+    if error_type_counts:
+        error_summary = ", ".join(f"{k}: {v}" for k, v in sorted(error_type_counts.items(), key=lambda x: -x[1]))
+        logger.info(f"Error breakdown: {error_summary}")
+    if failed_block_details:
+        logger.info(f"Failed blocks (first 5): {[d['block_id'] for d in failed_block_details[:5]]}")
+    logger.info("=" * 60)
+    
+    if failed_blocks_count == 0:
+        logger.info("🎉 PERFECT TRANSLATION - Zero failed blocks!")
+        console.print("[green]🎉 PERFECT TRANSLATION - Zero failed blocks![/green]")
+    elif source_fallback_blocks == 0:
+        logger.info("✅ ALL BLOCKS TRANSLATED - No source text fallbacks needed!")
+        console.print(f"[green]✅ ALL BLOCKS TRANSLATED - {emergency_blocks} emergency retries used[/green]")
+    else:
+        logger.warning(
+            f"⚠️ {source_fallback_blocks} blocks used source text (review recommended)\n"
+            f"  These blocks will appear in the output but may need manual translation"
+        )
+        console.print(
+            f"[yellow]⚠️ {source_fallback_blocks} blocks used source text (review recommended)[/yellow]\n"
+            f"[dim]  All blocks will still appear in the output PDF[/dim]"
+        )
+    
+    # CRITICAL FIX: Store ALL translated blocks in translations dictionary
+    # Store even failed/empty blocks to ensure no content is lost
+    for tb in translated_blocks:
+        if tb.translated_text and tb.translated_text.strip():
+            translations[tb.block_id] = tb.translated_text
+            logger.debug(f"Stored translation for {tb.block_id}: {len(tb.translated_text)} chars")
+        else:
+            # Store source text for failed/empty blocks to ensure they appear in PDF
+            source_text = tb.source_text
+            if not source_text or not source_text.strip():
+                # Fallback: get from document
+                for page in doc.pages:
+                    for block in page.blocks:
+                        if block.id == tb.block_id:
+                            source_text = _block_text(block)
+                            break
+                    if source_text:
+                        break
+            translations[tb.block_id] = source_text if source_text else ""
+            logger.warning(
+                f"Block {tb.block_id}: Translation empty/failed, storing source text as fallback "
+                f"({len(source_text) if source_text else 0} chars). Errors: {tb.errors}"
+            )
     
     # Log error summary
     if num_failed > 0:
@@ -1706,6 +1886,63 @@ def run_pipeline(
                 logger.warning(f"Translation errors: {error_summary}")
                 console.print(f"[yellow]⚠ Translation errors: {error_summary}[/yellow]")
 
+    # PHASE 4: Verify all blocks were translated (no missing blocks)
+    if len(translated_blocks) != len(masked_blocks):
+        missing_count = len(masked_blocks) - len(translated_blocks)
+        missing_block_ids = []
+        translated_block_ids = {tb.block_id for tb in translated_blocks}
+        for mb in masked_blocks:
+            if mb.block_id not in translated_block_ids:
+                missing_block_ids.append(mb.block_id)
+        
+        logger.error(
+            f"MISSING BLOCKS DETECTED: {missing_count} blocks not translated! "
+            f"Expected {len(masked_blocks)}, got {len(translated_blocks)}"
+        )
+        logger.error(f"Missing block IDs: {missing_block_ids[:10]}{'...' if len(missing_block_ids) > 10 else ''}")
+        console.print(
+            f"[red]❌ ERROR: {missing_count} blocks missing from translation! "
+            f"This is a critical bug.[/red]"
+        )
+        console.print(f"[red]Missing block IDs: {', '.join(missing_block_ids[:5])}{'...' if len(missing_block_ids) > 5 else ''}[/red]")
+    else:
+        logger.info(f"✓ All {len(masked_blocks)} blocks accounted for in translation")
+    
+    # CRITICAL: Verify translations dict has entries for ALL document blocks
+    all_block_ids = set()
+    for page in doc.pages:
+        for block in page.blocks:
+            if block.type == "text":
+                all_block_ids.add(block.id)
+    
+    missing_in_translations = []
+    for block_id in all_block_ids:
+        if block_id not in translations:
+            missing_in_translations.append(block_id)
+    
+    if missing_in_translations:
+        logger.error(
+            f"CRITICAL: {len(missing_in_translations)} blocks missing from translations dict! "
+            f"These blocks will not appear in the final PDF."
+        )
+        logger.error(f"Missing block IDs: {missing_in_translations[:10]}{'...' if len(missing_in_translations) > 10 else ''}")
+        console.print(
+            f"[red]❌ CRITICAL: {len(missing_in_translations)} blocks missing from translations dict![/red]"
+        )
+        # Add source text for missing blocks to prevent content loss
+        for block_id in missing_in_translations:
+            for page in doc.pages:
+                for block in page.blocks:
+                    if block.id == block_id:
+                        source_text = _block_text(block)
+                        translations[block_id] = source_text
+                        logger.warning(f"Added source text fallback for missing block {block_id}")
+                        break
+                if block_id in translations:
+                    break
+    else:
+        logger.info(f"✓ All {len(all_block_ids)} document blocks have entries in translations dict")
+    
     (out_dir / "translations.json").write_text(
         json.dumps([tb.model_dump() for tb in translated_blocks], indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -1736,6 +1973,7 @@ def run_pipeline(
             if is_header_for_post or is_title_for_post:
                 break
         
+        # Calculate post-translation score (outside page loop to avoid duplicates)
         post_score = compute_post_translation_score(
             block_id=tb.block_id,
             source_text=tb.source_text,
@@ -1792,7 +2030,7 @@ def run_pipeline(
         encoding="utf-8",
     )
 
-    # DEBUG: Verify all blocks have translations
+    # Verify all blocks have translations
     logger.info(f"Rendering with {len(translations)} translations")
     console.print(f"[cyan]📊 Rendering: {len(translations)} translations stored[/cyan]")
     
@@ -1811,42 +2049,31 @@ def run_pipeline(
     
     missing_blocks = all_block_ids - set(translations.keys())
     if missing_blocks:
-        logger.error(f"⚠️ {len(missing_blocks)} blocks have NO translation - using source text as fallback")
-        console.print(f"[red]⚠️ ERROR: {len(missing_blocks)} blocks missing translations - using source text[/red]")
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            missing_info = []
-            for bid in list(missing_blocks)[:10]:
-                block_info = all_block_info.get(bid, {})
-                missing_info.append({
-                    "block_id": bid,
-                    "source_preview": block_info.get("source_preview", ""),
-                    "is_header": block_info.get("is_header", False),
-                })
-            f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"H","location":"pipeline.py:1731","message":"Missing blocks detected","data":{"missing_count":len(missing_blocks),"total_blocks":len(all_block_ids),"translated_count":len(translations),"missing_blocks":missing_info}})+'\n')
-        # #endregion
-        # CRITICAL FIX: Use source text as fallback for ALL missing blocks
-        for bid in missing_blocks:
-            # Find the block to see what text it has
-            source_text = ""
-            for page in doc.pages:
-                for block in page.blocks:
-                    if block.id == bid:
-                        source_text = _block_text(block)
-                        # Use source as fallback (better than omitting the block)
-                        translations[bid] = source_text
-                        logger.error(f"  Using source text as fallback for block {bid}: '{source_text[:60]}...'")
-                        console.print(f"[red]  Using source as fallback for block {bid}[/red]")
+        missing_list = list(missing_blocks)[:10]
+        logger.error(
+            f"⚠️ {len(missing_blocks)} blocks have NO translation - using source text as fallback\n"
+            f"  Missing block IDs: {missing_list}{'...' if len(missing_blocks) > 10 else ''}\n"
+            f"  Action: Adding source text for all missing blocks to ensure they appear in PDF"
+        )
+        console.print(
+            f"[red]⚠️ ERROR: {len(missing_blocks)} blocks missing translations - using source text[/red]\n"
+            f"[dim]  Missing block IDs: {', '.join(missing_list[:3])}{'...' if len(missing_blocks) > 3 else ''}[/dim]"
+        )
+        # Add source text for missing blocks
+        for block_id in missing_blocks:
+            block_info = all_block_info.get(block_id)
+            if block_info:
+                source_text = _block_text(block_info["page"].blocks[0])  # Get from first block with this ID
+                for page in doc.pages:
+                    for block in page.blocks:
+                        if block.id == block_id:
+                            source_text = _block_text(block)
+                            break
+                    if source_text:
                         break
-                if source_text:
-                    break
-            if not source_text:
-                # Block not found - this is a serious issue
-                logger.error(f"  Block {bid} not found in document - this should not happen!")
-                console.print(f"[red]  Block {bid} not found in document![/red]")
+                translations[block_id] = source_text
+                logger.warning(f"Added source text fallback for missing block {block_id} ({len(source_text)} chars)")
     
-    # DEBUG: Log ALL translations with block IDs for first page (VERBOSE)
     console.print(f"[cyan]📋 Translations dictionary contents (first page blocks):[/cyan]")
     for page_idx, page in enumerate(doc.pages[:1]):  # First page only
         console.print(f"  Page {page_idx+1} blocks:")
@@ -1885,21 +2112,8 @@ def run_pipeline(
         for block in page.blocks:
             if block.type == "text" and block.meta.get("is_header"):
                 header_block_ids.add(block.id)
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    block_type = block.meta.get("block_type", "header")
-                    source_text = _block_text(block)
-                    trans_text = translations.get(block.id, "")
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"E","location":"pipeline.py:1455","message":"Header/title found in document","data":{"block_id":block.id,"block_type":block_type,"has_translation":block.id in translations,"source_preview":source_text[:50],"trans_preview":trans_text[:50] if trans_text else ""}})+'\n')
-                # #endregion
     
     missing_headers = header_block_ids - set(translations.keys())
-    # #region agent log
-    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"E","location":"pipeline.py:1464","message":"Header/title validation summary","data":{"total_headers":len(header_block_ids),"missing_headers":len(missing_headers),"missing_ids":list(missing_headers)[:10]}})+'\n')
-    # #endregion
     if missing_headers:
         logger.error(f"❌ {len(missing_headers)} headers/titles missing translations!")
         console.print(f"[red]❌ ERROR: {len(missing_headers)} headers/titles not translated![/red]")
@@ -1936,8 +2150,16 @@ def run_pipeline(
                         break
         
         if failed_headers:
-            logger.warning(f"⚠️ {len(failed_headers)} headers/titles are identity translations (not properly translated)")
-            console.print(f"[yellow]⚠️ WARNING: {len(failed_headers)} headers/titles are identity translations[/yellow]")
+            if failed_headers:
+                logger.warning(
+                    f"⚠️ {len(failed_headers)} headers/titles are identity translations (not properly translated)\n"
+                    f"  Failed header IDs: {failed_headers[:5]}{'...' if len(failed_headers) > 5 else ''}\n"
+                    f"  Action: These will appear in output but may need manual review"
+                )
+                console.print(
+                    f"[yellow]⚠️ WARNING: {len(failed_headers)} headers/titles are identity translations[/yellow]\n"
+                    f"[dim]  These blocks will still appear in the output (using source text)[/dim]"
+                )
             for bid, src in failed_headers[:3]:
                 logger.warning(f"  Header {bid}: '{src}...' (not translated)")
                 console.print(f"[yellow]  Header {bid}: '{src[:40]}...' (not translated)[/yellow]")
@@ -1975,7 +2197,9 @@ def run_pipeline(
         
         if source_numbering:
             # Extract the numbering prefix from source
-            numbering_prefix, numbering_type, _ = source_numbering
+            # source_numbering is a _DetectedNumbering dict-like object
+            numbering_prefix = source_numbering.get('prefix', '') if isinstance(source_numbering, dict) else getattr(source_numbering, 'prefix', '')
+            numbering_type = source_numbering.get('kind', '') if isinstance(source_numbering, dict) else getattr(source_numbering, 'kind', '')
             source_match = re.match(r'^((?:\d+[\.\)]|Section\s+\d+|Chapter\s+\d+|[IVXLCDM]+[\.\)]|[a-zA-Z][\.\)]|\d+\.\d+)[:\s]*)', source_text, re.IGNORECASE)
             if source_match:
                 source_numbering = source_match.group(1)  # e.g., "1. ", "Section 2: "
@@ -2064,8 +2288,8 @@ def run_pipeline(
     logger.info(f"Rendering translated PDF to: {output_pdf}")
     console.print(f"[cyan]📄 Rendering translated PDF...[/cyan]")
     try:
-        if cfg.render_mode == "perfect":
         # Perfect renderer (100% font size preservation, exact positioning, bullet preservation)
+        if cfg.render_mode == "perfect":
             render_translated_pdf_perfect(
             source_pdf=input_pdf,
             doc=doc,

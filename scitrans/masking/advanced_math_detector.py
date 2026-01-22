@@ -1,4 +1,4 @@
-"""Stub implementation of an advanced math detector.
+r"""Stub implementation of an advanced math detector.
 
 This module provides a minimal implementation of ``AdvancedMathDetector`` so that
 imports of this class do not fail even when the full math detection logic is

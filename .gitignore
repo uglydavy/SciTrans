@@ -42,11 +42,23 @@ debug*.pdf
 quick_test*.pdf
 *.pdf.backup
 output_*.pdf
+output.pdf
+output_test.pdf
+test_input.pdf
+test_output_fixed.pdf
+test_translation_verification.pdf
 *_fr.pdf
 *_translated.pdf
 
-# Experiments
-experiments/results/
+# Experiments (keep results for thesis research)
+# experiments/results/
+
+# Quality reports (regeneratable - PHASE 5.1)
+quality_report.json
+quality_report.html
+quality_report_*.json
+quality_report_*.html
+quality_report_before_fixes.json
 
 # OS
 .DS_Store
@@ -67,4 +79,3 @@ setup_env.sh
 
 # local patches
 final_patch*.diff
-SciTrans-src.zip

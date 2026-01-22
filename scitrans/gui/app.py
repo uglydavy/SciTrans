@@ -262,32 +262,12 @@ def translate_pdf(
         progress(0.2, desc="Initializing backend...")
 
         try:
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:265","message":"Initializing backend","data":{"backend":backend,"model":model}})+'\n')
-            # #endregion
             be = _get_backend(backend, model)
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:265","message":"Backend initialized successfully","data":{"backend":backend,"model":model,"backend_name":be.name}})+'\n')
-            # #endregion
         except ValueError as e:
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:266","message":"Backend initialization failed (ValueError)","data":{"backend":backend,"model":model,"error":str(e)}})+'\n')
-            # #endregion
             error_msg = f"Backend initialization failed: {e}\n\nPlease check:\n1. API keys are set in .env file or environment variables\n2. Required dependencies are installed\n3. Backend service is available"
             log_system(error_msg, "ERROR")
             return None, None, None, None, None, error_msg, "", 0, 0
         except Exception as e:
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"gui/app.py:270","message":"Backend initialization failed (Exception)","data":{"backend":backend,"model":model,"error":str(e),"error_type":type(e).__name__}})+'\n')
-            # #endregion
             error_msg = f"Unexpected error initializing backend: {e}"
             log_system(error_msg, "ERROR")
             return None, None, None, None, None, error_msg, "", 0, 0

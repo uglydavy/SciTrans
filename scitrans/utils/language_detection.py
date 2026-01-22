@@ -100,36 +100,16 @@ def detect_language(text: str, sample_size: int = 500) -> tuple[str, float]:
         
         if chinese_chars > japanese_chars and chinese_chars > korean_chars:
             confidence = min(cjk_chars / total_chars * 1.5, 0.9)
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"M","location":"language_detection.py:95","message":"Detected Chinese text","data":{"cjk_ratio":cjk_chars/total_chars,"confidence":confidence,"sample_preview":sample[:50]}})+'\n')
-            # #endregion
             return "zh", confidence
         elif japanese_chars > korean_chars:
             confidence = min(cjk_chars / total_chars * 1.5, 0.9)
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"M","location":"language_detection.py:103","message":"Detected Japanese text","data":{"cjk_ratio":cjk_chars/total_chars,"confidence":confidence,"sample_preview":sample[:50]}})+'\n')
-            # #endregion
             return "ja", confidence
         elif korean_chars > 0:
             confidence = min(cjk_chars / total_chars * 1.5, 0.9)
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"M","location":"language_detection.py:111","message":"Detected Korean text","data":{"cjk_ratio":cjk_chars/total_chars,"confidence":confidence,"sample_preview":sample[:50]}})+'\n')
-            # #endregion
             return "ko", confidence
         else:
             # Generic CJK (likely Chinese)
             confidence = min(cjk_chars / total_chars * 1.5, 0.9)
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"M","location":"language_detection.py:119","message":"Detected generic CJK text","data":{"cjk_ratio":cjk_chars/total_chars,"confidence":confidence,"sample_preview":sample[:50]}})+'\n')
-            # #endregion
             return "zh", confidence
 
     # For non-CJK text, use word-based detection
@@ -168,13 +148,6 @@ def detect_language(text: str, sample_size: int = 500) -> tuple[str, float]:
 
     # Normalize confidence (heuristic-based, so cap at 0.8)
     confidence = min(confidence * 1.5, 0.8)
-
-    # #region agent log
-    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"M","location":"language_detection.py:155","message":"Detected language via word matching","data":{"lang_code":lang_code,"confidence":confidence,"sample_preview":sample[:50]}})+'\n')
-    # #endregion
-
     logger.debug(f"Language detection: {lang_code} (confidence: {confidence:.2f})")
 
     return lang_code, confidence

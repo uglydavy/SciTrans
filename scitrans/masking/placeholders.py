@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import binascii
 import re
-from typing import Dict, Iterable, List
+from typing import Dict, List
 
 __all__ = ["generate_placeholder", "validate_placeholders"]
 

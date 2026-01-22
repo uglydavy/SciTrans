@@ -6,6 +6,7 @@ import fitz  # PyMuPDF
 
 from scitrans.core.models import BBox, Block, Document, Line, Page, Span, SpanStyle
 from scitrans.parsing.layout import (
+    classify_block_type,
     detect_headers_footers,
     detect_tables_and_captions,
     merge_paragraph_blocks,
@@ -143,6 +144,23 @@ def _detect_and_tag_headers_titles(blocks: list[Block], page_index_map: dict[str
             block.meta["avg_font_size"] = avg_font_size
             block.meta["max_font_size"] = max_font_size
             block.meta["is_bold"] = is_bold
+        
+        # PHASE 4.2: Add context-aware metadata tagging
+        # Use enhanced classification if not already classified
+        if "block_type" not in block.meta:
+            block.meta["block_type"] = classify_block_type(block)
+        
+        # Add additional metadata for translation pipeline (use block_text not text)
+        block.meta["has_section_number"] = bool(re.match(r'^(Section|Chapter|Part)\s+\d+', block_text, re.IGNORECASE))
+        block.meta["is_short"] = len(block_text) < 100
+        
+        # Font size category for consistent rendering
+        if avg_font_size >= 14:
+            block.meta["font_size_category"] = "large"
+        elif avg_font_size >= 11:
+            block.meta["font_size_category"] = "medium"
+        else:
+            block.meta["font_size_category"] = "small"
 
 
 def _sort_blocks_by_reading_order(blocks: list[Block]) -> list[Block]:

@@ -90,6 +90,8 @@ class MaskedBlock(BaseModel):
     registry: dict[str, str]
     # For debugging
     mask_counts: dict[str, int] = Field(default_factory=dict)
+    # PHASE 4: Metadata for context-aware processing (e.g., section_prefix)
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class TranslatedBlock(BaseModel):

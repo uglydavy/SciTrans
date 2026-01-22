@@ -1,18 +1,88 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Optional
 
 from scitrans.core.models import Block
 # Import placeholder helpers for generation and validation
-from scitrans.masking.placeholders import generate_placeholder, validate_placeholders
+from scitrans.masking.placeholders import generate_placeholder
+
+logger = logging.getLogger(__name__)
 
 # Placeholder generation is handled dynamically via scitrans.masking.placeholders.
 # The old DEFAULT_PLACEHOLDER_FMT is kept for backwards compatibility but is no longer
 # used to construct new placeholders. Instead, each placeholder embeds a CRC32 checksum
 # of the original span. See scitrans.masking.placeholders.generate_placeholder for details.
 DEFAULT_PLACEHOLDER_FMT = "@@SCITRANS_{kind}_{num:04d}_{crc:08X}@@"
+
+# Common academic/technical terms that are NOT person names
+# These patterns prevent false masking of section titles, technical terms, etc.
+ACADEMIC_TERMS = {
+    # Document structure
+    "Abstract", "Summary", "Introduction", "Conclusion", "Results",
+    "Methodology", "Discussion", "References", "Appendix", "Section",
+    "Chapter", "Subsection", "Paragraph", "Document", "Report",
+    "Background", "Overview", "Preface", "Acknowledgments", "Index",
+    
+    # Research terms (two-word combinations)
+    "Content Analysis", "Data Analysis", "Statistical Analysis",
+    "Computational Complexity", "Machine Learning", "Deep Learning",
+    "Natural Language", "Artificial Intelligence", "Computer Vision",
+    "Data Science", "Information Retrieval", "Pattern Recognition",
+    "Computer Science", "Software Engineering", "Systems Engineering",
+    "Distributed Systems", "Operating Systems", "Database Systems",
+    
+    # Technical phrases (common patterns)
+    "System Architecture", "Network Protocol", "Database Management",
+    "Software Engineering", "Hardware Implementation", "Algorithm Design",
+    "Performance Evaluation", "Experimental Results", "Comparative Study",
+    "Case Study", "Literature Review", "Systematic Review",
+    "Related Work", "Future Work", "Empirical Study",
+    
+    # Method/content descriptors
+    "Mathematical Content", "Theoretical Framework", "Empirical Evidence",
+    "Quantitative Research", "Qualitative Research", "Mixed Methods",
+    "Research Methodology", "Research Design", "Data Collection",
+    "Data Visualization", "Result Summary", "Statistical Significance",
+    
+    # Table/figure related
+    "Table Content", "Figure Caption", "Chart Data", "Graph Analysis",
+    "Visual Analysis", "Image Processing", "Signal Processing",
+    
+    # Analysis types
+    "Comparative Analysis", "Complexity Analysis", "Performance Analysis",
+    "Error Analysis", "Risk Analysis", "Cost Analysis",
+    "Sensitivity Analysis", "Trend Analysis", "Gap Analysis",
+    
+    # Common single words that appear in technical contexts
+    "Analysis", "Content", "Method", "Approach", "Framework", "Model",
+    "Structure", "Process", "System", "Network", "Protocol", "Interface",
+    "Architecture", "Implementation", "Evaluation", "Comparison",
+    "Validation", "Verification", "Optimization", "Enhancement",
+    
+    # Field-specific terms
+    "Neural Network", "Decision Tree", "Support Vector",
+    "Random Forest", "Gradient Descent", "Feature Engineering",
+    "Cross Validation", "Dimensionality Reduction", "Anomaly Detection",
+    "Sentiment Analysis", "Topic Modeling", "Named Entity",
+    
+    # Common technical adjective + noun combinations
+    "Experimental Setup", "Proposed Method", "Baseline Method",
+    "Novel Approach", "Existing Methods", "Current State",
+    "Previous Work", "Recent Advances", "Key Findings",
+    "Main Contributions", "Future Directions", "Open Problems",
+}
+
+# Additional technical keywords that often appear in false positive matches
+TECHNICAL_KEYWORDS = {
+    "Analysis", "Content", "Data", "System", "Method",
+    "Network", "Protocol", "Framework", "Model", "Structure",
+    "Process", "Algorithm", "Design", "Implementation", "Evaluation",
+    "Performance", "Complexity", "Architecture", "Engineering",
+    "Science", "Research", "Study", "Review", "Survey",
+}
 
 
 @dataclass(frozen=True)
@@ -41,9 +111,10 @@ def default_rules() -> list[MaskRule]:
             # Person names (more specific patterns to avoid false positives)
             # Matches: "John Smith", "Tchienkoua Franck Davy", "Ouedraogo T. Rachid Hérlot"
             # Pattern: 2-4 capitalized words, optionally with middle initial
-            # Excludes common words that start with capital (like "The", "This", etc.)
+            # Excludes common document structure words
             # Also matches names with ID numbers: "Name / ID: 123456"
-            MaskRule("PERSON_NAME", re.compile(r"\b(?:[A-Z][a-z]{2,}(?:\s+[A-Z]\.)?\s+){1,2}[A-Z][a-z]{2,}(?:\s*/\s*ID\s*:\s*\d+)?\b"), priority=68),
+            # CRITICAL: Use negative lookahead to exclude document words
+            MaskRule("PERSON_NAME", re.compile(r"\b(?!(?:Small|Test|Document|Report|Study|Section|Chapter|Introduction|Conclusion|Results|Methodology|Abstract|Summary)\b)(?:[A-Z][a-z]{2,}(?:\s+[A-Z]\.)?\s+){1,2}[A-Z][a-z]{2,}(?:\s*/\s*ID\s*:\s*\d+)?\b"), priority=68),
             # Place names (capitalized, often with common place suffixes)
             MaskRule("PLACE_NAME", re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:City|State|Country|University|Institute|Laboratory|Center|Centre|Hospital|School|College))\b"), priority=67),
             # Table of contents entries (numbered sections)
@@ -95,6 +166,86 @@ class MaskingEngine:
         else:
             self.advanced_math = None
 
+    def is_likely_person_name(self, text: str, block: Optional[Block] = None) -> bool:
+        """Validate if text is likely a person name vs technical term.
+        
+        This method uses multiple heuristics to avoid false positives:
+        1. Exact match against academic terms list
+        2. Check for technical keywords in the text
+        3. Block metadata (headers, titles)
+        4. Text formatting (all caps, special patterns)
+        5. Linguistic patterns typical of person names
+        
+        Args:
+            text: The matched text to validate
+            block: Optional block context for additional validation
+            
+        Returns:
+            True if text is likely a person name, False otherwise
+        """
+        # Exact match against academic terms (case-sensitive)
+        if text in ACADEMIC_TERMS:
+            return False
+        
+        # Case-insensitive check for multi-word academic terms
+        text_lower = text.lower()
+        for term in ACADEMIC_TERMS:
+            if text_lower == term.lower():
+                return False
+        
+        # Check each word against technical keywords
+        words = text.split()
+        for word in words:
+            if word in TECHNICAL_KEYWORDS:
+                return False
+            # Also check case-insensitive
+            if word.lower().capitalize() in TECHNICAL_KEYWORDS:
+                return False
+        
+        # Exclude if block is a header/title
+        if block and (block.meta.get("is_header") or 
+                      block.meta.get("block_type") in ("title", "header", "subheader")):
+            return False
+        
+        # Exclude if all caps (likely acronym or section header)
+        if text.isupper() and len(text) > 3:  # Allow short all-caps like "PhD"
+            return False
+        
+        # Exclude common section title patterns
+        if any(keyword in text for keyword in [
+            "Section", "Chapter", "Part", "Figure", "Table",
+            "Appendix", "Introduction", "Conclusion", "Results"
+        ]):
+            return False
+        
+        # Exclude if it ends with common technical suffixes
+        if any(text.endswith(suffix) for suffix in [
+            "Analysis", "Framework", "System", "Method", "Approach",
+            "Model", "Structure", "Algorithm", "Design", "Process"
+        ]):
+            return False
+        
+        # Valid person names typically have:
+        # - 2-4 words (first name, optional middle, last name)
+        # - Each word properly capitalized (not all caps)
+        # - Reasonable length (not too short or too long)
+        word_count = len(words)
+        if word_count < 2 or word_count > 4:
+            return False
+        
+        # Check if words follow proper name capitalization
+        # (First letter capital, rest lowercase, except middle initials)
+        for word in words:
+            # Allow middle initials like "J." or "T."
+            if len(word) == 2 and word[1] == '.':
+                continue
+            # Check standard capitalization
+            if not (word[0].isupper() and (len(word) == 1 or word[1:].islower() or word[1:].istitle())):
+                return False
+        
+        # If we've passed all exclusion checks, it's likely a person name
+        return True
+
     def mask(
         self, 
         text: str, 
@@ -104,6 +255,9 @@ class MaskingEngine:
         counts: dict[str, int] = {}
 
         masked = text
+        
+        # Track rejected masks for debugging
+        rejected_masks: list[tuple[str, str]] = []
         
         # Use advanced math detection if available and block is provided.  This masks
         # spans that are likely mathematical expressions even if they are not
@@ -125,14 +279,29 @@ class MaskingEngine:
 
             def _repl(m: re.Match, rule=rule) -> str:
                 nonlocal n
+                matched_text = m.group(0)
+                
+                # Validate PERSON_NAME matches to avoid false positives
+                if rule.kind == "PERSON_NAME":
+                    if not self.is_likely_person_name(matched_text, block):
+                        rejected_masks.append((rule.kind, matched_text))
+                        return matched_text  # Don't mask - return original text
+                
                 n += 1
-                placeholder = generate_placeholder(rule.kind, n, m.group(0))
-                registry[placeholder] = m.group(0)
+                placeholder = generate_placeholder(rule.kind, n, matched_text)
+                registry[placeholder] = matched_text
                 return placeholder
 
             masked = rule.pattern.sub(_repl, masked)
             if n:
                 counts[rule.kind] = n
+
+        # Log rejected masks (only in debug mode to avoid noise)
+        if rejected_masks and block:
+            logger.debug(
+                f"Block {block.id}: Rejected {len(rejected_masks)} false positive mask(s): "
+                f"{rejected_masks[:5]}{'...' if len(rejected_masks) > 5 else ''}"
+            )
 
         return masked, registry, counts
 
@@ -174,6 +343,25 @@ class MaskingEngine:
                     if err in errors:
                         errors.remove(err)
             out = repaired
+        
+        # CRITICAL: Validate all placeholders were restored
+        remaining_placeholders = re.findall(r'@@SCITRANS_\w+_\d+_[A-F0-9]+@@', out)
+        if remaining_placeholders:
+            for ph in remaining_placeholders:
+                # Check if this placeholder is in the registry
+                if ph in registry:
+                    # Placeholder was in registry but didn't get restored - force restore now
+                    out = out.replace(ph, registry[ph])
+                    logger.warning(f"Force-restored placeholder: {ph}")
+                else:
+                    # Placeholder not in registry - remove it (likely hallucination)
+                    logger.error(f"Unrestore-able placeholder found (not in registry): {ph} - REMOVING")
+                    out = out.replace(ph, "")  # Remove hallucinated placeholder
+                    errors.append(f"hallucinated_placeholder:{ph}")
+        
+        # Log restoration errors at appropriate level
+        if errors:
+            logger.error(f"Placeholder restoration errors: {len(errors)} errors - {errors[:5]}")
 
         return out, errors
 

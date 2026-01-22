@@ -48,14 +48,25 @@ class OllamaBackend:
             f"Remember: Output ONLY the translated text. Do not include any instructions, explanations, or labels."
         )
 
+        # PHASE 3.3: Optimize Ollama for speed
+        # Use timeout from request if available, otherwise default to 120s
+        request_timeout = getattr(req, 'timeout', 120.0) if hasattr(req, 'timeout') else 120.0
+        # Ensure minimum timeout of 60s for safety
+        request_timeout = max(60.0, request_timeout)
+        
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "temperature": req.temperature,
             "stream": False,
+            "options": {
+                "temperature": req.temperature,
+                "num_predict": 512,  # Limit output length to prevent over-generation
+                "num_ctx": 1024,     # Reduce context window (was default 2048) for faster processing
+                "top_p": 0.9,        # Nucleus sampling for quality
+            },
         }
         try:
-            response = requests.post(url, json=payload, timeout=120)
+            response = requests.post(url, json=payload, timeout=request_timeout)
             response.raise_for_status()
             result = response.json()
             # Ollama returns {"response": "..."}

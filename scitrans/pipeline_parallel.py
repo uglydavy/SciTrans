@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from scitrans.core.models import MaskedBlock
-from scitrans.translation.backends.base import TranslationBackend, TranslateRequest
+from scitrans.translation.backends.base import TranslationBackend
 
 logger = logging.getLogger(__name__)
 

@@ -46,11 +46,20 @@ class DeepSeekBackend:
         ]
 
         # Add context if provided (separate message, not translated)
-        if req.context:
+        # Context is now a dict, but we support legacy string context for backward compatibility
+        context_text = None
+        if isinstance(req.context, dict):
+            # Extract text context if present, otherwise ignore dict context (it's metadata)
+            context_text = req.context.get("text") if req.context else None
+        elif isinstance(req.context, str) and req.context:
+            # Legacy string context
+            context_text = req.context
+        
+        if context_text:
             messages.append(
                 {
                     "role": "system",
-                    "content": f"Reference context (do NOT translate):\n{req.context}",
+                    "content": f"Reference context (do NOT translate):\n{context_text}",
                 }
             )
 

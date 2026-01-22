@@ -82,11 +82,6 @@ python3 scripts/check_repo_hygiene.py --root . --strict
 #### `cleanup_repo_artifacts.sh`
 Clean up development artifacts (caches, builds, compiled files).
 
-**Usage:**
-```bash
-bash scripts/cleanup_repo_artifacts.sh
-```
-
 **Removes:**
 - `.idea`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`
 - `build/`, `dist/`, `*.egg-info`

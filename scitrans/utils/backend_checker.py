@@ -63,10 +63,17 @@ def check_dependency(module_name: str) -> tuple[bool, str | None]:
         Tuple of (is_available, error_message)
     """
     try:
-        __import__(module_name)
+        # PHASE 5: Try importing and also check the module is functional
+        mod = __import__(module_name)
+        # Verify it's actually loaded
+        if mod is None:
+            return False, f"Module '{module_name}' import returned None"
         return True, None
     except ImportError as e:
         return False, f"Module '{module_name}' not found: {str(e)}"
+    except Exception as e:
+        # Catch other errors (e.g., module exists but has issues)
+        return False, f"Module '{module_name}' error: {str(e)}"
 
 
 def check_backend_dependencies(backend: str) -> tuple[bool, list[str]]:

@@ -92,8 +92,12 @@ class PostTranslationScore:
             "validation_failed",
             "wrong_translation_generic_response",
             "placeholder_missing",
+            "placeholder_restoration_failed",  # Also critical
         ]
-        has_critical_error = any(err in critical_errors for err in self.issues)
+        has_critical_error = any(
+            any(crit in err for crit in critical_errors) 
+            for err in self.issues
+        )
         
         return (
             self.overall_score >= 0.85 
@@ -234,12 +238,45 @@ def compute_post_translation_score(
                     warnings.append(f"identity_translation:moderate_similarity_{overlap_ratio:.2f}")
 
     # 1. Placeholder preservation (critical)
+    # After restoration, placeholders should NOT be in translated_text (they've been replaced)
+    # So successful restoration = placeholders NOT present in final text
     placeholder_score = 1.0
     if registry:
-        present = sum(1 for ph in registry if ph in translated_text)
-        placeholder_score = present / len(registry) if registry else 1.0
-        if placeholder_score < 1.0:
-            issues.append(f"placeholder_preservation:{placeholder_score:.2f}")
+        # Check for restoration errors first (most reliable indicator of failure)
+        has_restoration_error = any(
+            "placeholder" in err.lower() 
+            or "missing_placeholder" in err.lower()
+            or "placeholder_restore" in err.lower()
+            for err in errors
+        )
+        
+        # Check if placeholders are still present in final text (shouldn't be after restoration)
+        still_present = sum(1 for ph in registry if ph in translated_text)
+        
+        if has_restoration_error:
+            # Restoration failed - calculate score based on what was restored
+            if still_present > 0:
+                # Some placeholders still present = partial restoration failure
+                placeholder_score = (len(registry) - still_present) / len(registry)
+            else:
+                # No placeholders present but errors reported = restoration attempted but some failed
+                # Count missing placeholders from errors
+                missing_errors = [err for err in errors if "missing_placeholder" in err.lower()]
+                if missing_errors:
+                    # Estimate missing count from errors (conservative: assume at least 1)
+                    placeholder_score = max(0.0, (len(registry) - len(missing_errors)) / len(registry))
+                else:
+                    # Generic placeholder error - assume partial failure
+                    placeholder_score = 0.7
+            issues.append("placeholder_restoration_failed")
+        elif still_present > 0:
+            # Placeholders still present but no errors = restoration not attempted or incomplete
+            placeholder_score = (len(registry) - still_present) / len(registry)
+            issues.append(f"placeholder_not_restored:{still_present}/{len(registry)}")
+        else:
+            # No placeholders present and no errors = restoration succeeded (perfect!)
+            placeholder_score = 1.0
+    # If registry is empty, no placeholders to preserve, so score is 1.0 (already set)
 
     # 2. Numeric accuracy
     source_nums = set(re.findall(r"\b\d+\.?\d*\b", source_text))
@@ -311,14 +348,27 @@ def compute_post_translation_score(
 
     # Overall score (weighted average)
     # Identity score is critical - if it's 0, the overall score should be penalized heavily
-    overall_score = (
-        identity_score * 0.20  # Critical: identity translations are bad
-        + placeholder_score * 0.30  # Most critical after identity
-        + numeric_score * 0.20
-        + format_score * 0.15
-        + fluency_score * 0.10
-        + fidelity_score * 0.05
-    )
+    # Adjust weights based on whether placeholders exist
+    has_placeholders = bool(registry)
+    if has_placeholders:
+        # When placeholders exist, they're critical (30% weight)
+        overall_score = (
+            identity_score * 0.20  # Critical: identity translations are bad
+            + placeholder_score * 0.30  # Most critical after identity
+            + numeric_score * 0.20
+            + format_score * 0.15
+            + fluency_score * 0.10
+            + fidelity_score * 0.05
+        )
+    else:
+        # When no placeholders, redistribute weight to other factors
+        overall_score = (
+            identity_score * 0.25  # Slightly more weight on identity
+            + numeric_score * 0.25  # More weight on numeric accuracy
+            + format_score * 0.20  # More weight on format
+            + fluency_score * 0.15  # More weight on fluency
+            + fidelity_score * 0.15  # More weight on fidelity
+        )
     
     # Heavy penalty for identity translations
     if identity_score < 0.5:
@@ -327,9 +377,11 @@ def compute_post_translation_score(
     # Determine if needs review or retry
     # More lenient thresholds for needs_review to avoid false positives
     # Identity translations always need retry (especially for headers/titles)
+    # Only require placeholder_score < 0.9 for retry if there are actually placeholders to preserve
+    has_placeholders = bool(registry)
     needs_retry = (
         identity_score < 0.5  # Identity translation detected
-        or placeholder_score < 0.9 
+        or (has_placeholders and placeholder_score < 0.9)  # Only check if placeholders exist
         or numeric_score < 0.8 
         or (is_header and overall_score < 0.85)  # Headers need higher quality
         or len(issues) > 2

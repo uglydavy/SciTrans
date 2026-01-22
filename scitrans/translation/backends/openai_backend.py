@@ -50,8 +50,17 @@ class OpenAIBackend:
         start = time.time()
 
         # Build messages with context if provided
-        if req.context:
-            user_content = f"CONTEXT (for reference only, DO NOT translate):\n{req.context}\n\n---\n\nTRANSLATE THIS:\n{req.text}"
+        # Context is now a dict, but we support legacy string context for backward compatibility
+        context_text = None
+        if isinstance(req.context, dict):
+            # Extract text context if present, otherwise ignore dict context (it's metadata)
+            context_text = req.context.get("text") if req.context else None
+        elif isinstance(req.context, str) and req.context:
+            # Legacy string context
+            context_text = req.context
+        
+        if context_text:
+            user_content = f"CONTEXT (for reference only, DO NOT translate):\n{context_text}\n\n---\n\nTRANSLATE THIS:\n{req.text}"
         else:
             user_content = req.text
 

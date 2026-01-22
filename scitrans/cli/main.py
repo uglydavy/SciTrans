@@ -389,27 +389,45 @@ def translate(
 
 @app.command()
 def repair(
-    in_pdf: str = typer.Option(..., "--in", help="Input PDF path"),
+    in_pdf: str = typer.Option(..., "--in", help="Original input PDF path"),
     out_pdf: str = typer.Option(..., "--out", help="Output repaired PDF path"),
     artifacts_dir: str = typer.Option(
-        ..., "--artifacts", help="Artifacts directory from previous run"
+        ..., "--artifacts", help="Artifacts directory from previous run (e.g., outputs/small_test)"
     ),
-    backend: str = typer.Option("cascade_free", "--backend", help="Backend name"),
-    model: str = typer.Option("cascade_free", "--model", help="Model name"),
+    backend: str = typer.Option("cascade_free", "--backend", help="Backend name (default: cascade_free)"),
+    model: str = typer.Option("cascade_free", "--model", help="Model name (default: cascade_free)"),
     block_ids: str = typer.Option(
-        None, "--blocks", help="Comma-separated block IDs to repair (default: all failed)"
+        None, "--blocks", help="Comma-separated block IDs to repair (default: all failed blocks)"
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output with detailed logs"),
 ):
     """
     Repair failed blocks from a previous translation run.
+    
+    This command re-translates only the blocks that failed in the previous run,
+    using the artifacts (translations.json, health_scores.json) saved during that run.
+    
+    The repair workflow:
+    1. Load failed blocks from artifacts/health_scores.json
+    2. Re-translate them with improved prompts and settings
+    3. Merge with successful translations from artifacts/translations.json
+    4. Re-render the complete PDF with all blocks (fixed + original successful ones)
 
     Examples:
-        # Repair all failed blocks
-        scitrans repair --in doc.pdf --out doc_fixed.pdf --artifacts outputs/doc
+        # Repair all failed blocks (most common usage)
+        scitrans repair --in test.pdf --out test_fixed.pdf --artifacts outputs/test
 
-        # Repair specific blocks
-        scitrans repair --in doc.pdf --out doc_fixed.pdf --artifacts outputs/doc --blocks b_0_abc,b_1_def
+        # Repair specific blocks by ID
+        scitrans repair --in test.pdf --out test_fixed.pdf --artifacts outputs/test --blocks b_0_123abc,b_1_456def
+        
+        # Use a different backend for repair (e.g., try Anthropic for hard cases)
+        scitrans repair --in test.pdf --out test_fixed.pdf --artifacts outputs/test --backend anthropic
+        
+        # Verbose mode to see detailed progress
+        scitrans repair --in test.pdf --out test_fixed.pdf --artifacts outputs/test --verbose
+    
+    Note: The artifacts directory is the output folder from your previous translation
+    (e.g., if you ran 'scitrans translate --in test.pdf', the artifacts are in 'outputs/test').
     """
     load_environment_variables()
 

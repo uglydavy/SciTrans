@@ -32,7 +32,6 @@ import re
 import fitz  # PyMuPDF
 
 from scitrans.core.models import Block, Document
-from scitrans.parsing.math_detection import is_equation_span
 from scitrans.rendering.font_manager import FontManager
 from scitrans.rendering.math_safe_renderer import (
     RenderConfig,
@@ -41,13 +40,45 @@ from scitrans.rendering.math_safe_renderer import (
     _try_insert_textbox,
 )
 from scitrans.rendering.span_level_renderer import preserve_color_from_spans
-from scitrans.utils.numbering_detector import NumberingDetector
 
 logger = logging.getLogger(__name__)
 
 # PyMuPDF font flags (from span.style.flags)
 FLAG_BOLD = 2**4
 FLAG_ITALIC = 2**1
+
+
+def _intelligent_truncate(text: str, max_chars: int) -> str:
+    """Truncate text intelligently at word boundaries.
+    
+    PHASE 3.2: Improved truncation that:
+    - Finds last space before max_chars (word boundary)
+    - Ensures at least 80% of max_chars is used
+    - Removes trailing punctuation
+    - Adds ellipsis
+    
+    Args:
+        text: Text to truncate
+        max_chars: Maximum character count
+        
+    Returns:
+        Truncated text with ellipsis
+    """
+    if len(text) <= max_chars:
+        return text
+    
+    # Find last space before max_chars
+    truncated = text[:max_chars]
+    last_space = truncated.rfind(' ')
+    
+    # Only truncate at word boundary if we're at least 80% of max
+    if last_space > max_chars * 0.8:
+        truncated = truncated[:last_space]
+    
+    # Remove trailing punctuation
+    truncated = truncated.rstrip('.,;:!?')
+    
+    return truncated + '...'
 
 
 def extract_bullet_character(text: str) -> tuple[str, str]:
@@ -190,15 +221,15 @@ def _resolve_font_key(base_font: str, flags: int) -> str:
 def _get_block_base_style(block: Block, min_font_size: float = 10.0) -> tuple[str, float, int]:
     """Return (font_name, font_size, flags) for the block.
 
-    Enhanced extraction with fallback support:
-    - For headers/titles: Uses max font size and dominant font
-    - For normal text: Uses average font size and most common font
-    - Ensures minimum font size for readability
+    CRITICAL: Preserves original font sizes from the source PDF.
+    - For headers/titles: Uses max font size from source (no artificial minimums)
+    - For normal text: Uses average font size from source
+    - DOES NOT enforce arbitrary minimums that distort the original layout
     - Preserves bold/italic flags from dominant style
-    - Falls back to defaults if font extraction fails
+    - Falls back to defaults only if font extraction fails
     """
     if not block.lines:
-        return "Times-Roman", max(11.0, min_font_size), 0
+        return "Times-Roman", 11.0, 0
     
     # Try to use enhanced metadata from parser first (if available)
     font_families = block.meta.get("font_families")
@@ -223,28 +254,22 @@ def _get_block_base_style(block: Block, min_font_size: float = 10.0) -> tuple[st
     
     if not font_info:
         # Ultimate fallback to defaults
-        return "Times-Roman", max(11.0, min_font_size), 0
+        return "Times-Roman", 11.0, 0
     
     # Check if this is a header/title from metadata
     is_header = block.meta.get("is_header", False)
     block_type = block.meta.get("block_type", "normal")
     
     if is_header or block_type in ("title", "header", "subheader"):
-        # For headers: use max font size and preserve bold
+        # For headers: use ORIGINAL max font size (no artificial minimums)
         max_size = max(f[1] for f in font_info)
         # Find the span with max size to get its font and flags
         max_font_info = max(font_info, key=lambda x: x[1])
         font_name = max_font_info[0]
-        font_size = max(max_size, min_font_size)
-        # Preserve bold flag for headers
+        # CRITICAL: Use original font size - DO NOT enforce artificial minimums
+        font_size = max_size
+        # Preserve bold flag for headers (but don't force bold if not in original)
         flags = max_font_info[2]
-        if block_type == "title":
-            # Titles should be bold and larger
-            flags = flags | (2**4)  # FLAG_BOLD
-            font_size = max(font_size, 16.0)
-        elif block_type == "header":
-            flags = flags | (2**4)  # FLAG_BOLD
-            font_size = max(font_size, 14.0)
         return font_name, font_size, flags
     else:
         # For normal text: use most common font and average size
@@ -259,11 +284,9 @@ def _get_block_base_style(block: Block, min_font_size: float = 10.0) -> tuple[st
         else:
             font_name = font_info[0][0]
         
-        # Average font size - use actual average, but ensure reasonable minimum
+        # CRITICAL: Use original average font size - no arbitrary minimums
         avg_size = sum(f[1] for f in font_info) / len(font_info)
-        # Don't enforce 12pt minimum - let font fitting handle size reduction
-        # This prevents forcing text to be too large and causing overflow
-        font_size = max(avg_size, 8.0)  # Only enforce 8pt absolute minimum
+        font_size = avg_size
         
         # Most common flags (majority vote)
         flag_counts: dict[int, int] = {}
@@ -293,11 +316,6 @@ def _should_replace_block(
     is_toc = ("table of contents" in source_text.lower() or "contents" in source_text.lower()) and len(source_text) < 100
     is_figure_caption = any(keyword in source_text.lower() for keyword in ["figure", "fig.", "table", "tab."]) and len(source_text) < 200
     if is_table_region and not translate_tables and not (is_toc or is_figure_caption):
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"J","location":"perfect_renderer.py:278","message":"Table block skipped (not TOC/figure)","data":{"block_id":block.id}})+'\n')
-        # #endregion
         return False, None, source_text
 
     target_text = translations.get(block.id)
@@ -306,30 +324,14 @@ def _should_replace_block(
     # Use source text as fallback for headers to ensure they appear
     is_header = block.meta.get("is_header", False)
     block_type = block.meta.get("block_type", "normal")
-    
-    # #region agent log
-    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"K","location":"perfect_renderer.py:287","message":"_should_replace_block entry","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"has_target_text":bool(target_text),"source_preview":source_text[:50]}})+'\n')
-    # #endregion
-
-    # Missing / empty translation → keep original (coverage safety)
+    # Missing / empty translation → use source text (CRITICAL: never skip blocks)
     if not target_text or not target_text.strip():
-        # For headers, use source text as fallback (better than nothing)
-        if is_header:
-            logger.warning(f"Block {block.id}: Header translation is empty, using source as fallback")
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"L","location":"perfect_renderer.py:295","message":"Header with no translation - using source fallback","data":{"block_id":block.id,"is_header":is_header}})+'\n')
-            # #endregion
-            return True, source_text, source_text  # Render source text for headers
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"L","location":"perfect_renderer.py:300","message":"Non-header with no translation - returning False","data":{"block_id":block.id,"is_header":is_header}})+'\n')
-        # #endregion
-        return False, None, source_text
+        # Always use source text as fallback to ensure block is rendered
+        logger.warning(
+            f"Block {block.id}: Translation empty/missing, using source text as fallback. "
+            f"Source: '{source_text[:100]}'"
+        )
+        return True, source_text, source_text  # Always render, even if using source text
 
     # Identity translation → STILL REPLACE (user wants translation, not source)
     # But log a warning
@@ -342,6 +344,74 @@ def _should_replace_block(
         return True, target_text, source_text
 
     return True, target_text, source_text
+
+
+def _normalize_font_sizes_globally(doc: Document) -> dict[str, float]:
+    """Compute consistent font sizes for each block type across the document.
+    
+    This ensures that all headers use the same size, all normal text uses the same size, etc.
+    Returns a mapping of block_id -> normalized_font_size.
+    
+    Strategy:
+    1. Group blocks by type (title, header, subheader, normal)
+    2. Within each group, compute the median font size
+    3. Use median as the normalized size for all blocks in that group
+    """
+    # Collect font sizes by block type
+    size_by_type: dict[str, list[float]] = {
+        "title": [],
+        "header": [],
+        "subheader": [],
+        "normal": [],
+    }
+    block_to_type: dict[str, str] = {}
+    
+    for page in doc.pages:
+        for block in page.blocks:
+            if block.type != "text" or not block.lines:
+                continue
+            
+            # Determine block type
+            block_type = block.meta.get("block_type", "normal")
+            if block_type not in size_by_type:
+                block_type = "normal"
+            
+            block_to_type[block.id] = block_type
+            
+            # Get font size from metadata or spans
+            if "max_font_size" in block.meta:
+                font_size = block.meta["max_font_size"]
+            elif "avg_font_size" in block.meta:
+                font_size = block.meta["avg_font_size"]
+            else:
+                # Fallback: extract from spans
+                sizes = []
+                for line in block.lines:
+                    for span in line.spans:
+                        if span.style and span.style.size:
+                            sizes.append(float(span.style.size))
+                font_size = sum(sizes) / len(sizes) if sizes else 11.0
+            
+            size_by_type[block_type].append(font_size)
+    
+    # Compute median font size for each block type
+    normalized_sizes: dict[str, float] = {}
+    for block_type, sizes in size_by_type.items():
+        if sizes:
+            # Use median for robustness (less affected by outliers)
+            sizes_sorted = sorted(sizes)
+            median_idx = len(sizes_sorted) // 2
+            median_size = sizes_sorted[median_idx]
+            normalized_sizes[block_type] = median_size
+            logger.info(f"Font normalization: {block_type} blocks → {median_size:.1f}pt (median of {len(sizes)} blocks)")
+    
+    # Map each block to its normalized size
+    block_normalized_sizes: dict[str, float] = {}
+    for block_id, block_type in block_to_type.items():
+        if block_type in normalized_sizes:
+            block_normalized_sizes[block_id] = normalized_sizes[block_type]
+    
+    return block_normalized_sizes
 
 
 def render_translated_pdf_perfect(
@@ -360,24 +430,28 @@ def render_translated_pdf_perfect(
       - Only blocks that actually have a non-empty, non-identity translation are redacted.
       - Preserved blocks (including tables when translate_tables=False) remain untouched.
       - For replaced blocks, we use insert_textbox with font fitting to keep text inside bbox.
+      - Font sizes are normalized globally to ensure consistency across similar blocks.
     """
 
     cfg = cfg or RenderConfig()
     font_mgr = FontManager(assets_dir=assets_dir)
     pdf = fitz.open(source_pdf)
+    
+    # CRITICAL: Only normalize font sizes for large documents (>10 pages)
+    # For short documents (≤10 pages), preserve exact original font sizes
+    # This prevents unwanted normalization that removes intentional size variations
+    if len(doc.pages) > 10:
+        logger.info(f"Document has {len(doc.pages)} pages - applying font normalization for consistency")
+        normalized_font_sizes = _normalize_font_sizes_globally(doc)
+    else:
+        logger.info(f"Document has {len(doc.pages)} pages - preserving original font sizes (no normalization)")
+        normalized_font_sizes = {}  # Empty dict = no normalization, preserve exact original sizes
 
     if len(pdf) != len(doc.pages):
         raise ValueError(f"Page count mismatch: parsed={len(doc.pages)} pdf={len(pdf)}")
 
     for page_idx, page_model in enumerate(doc.pages):
         page = pdf[page_idx]
-
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"perfect_renderer.py:332","message":"Rendering page","data":{"page_idx":page_idx,"total_blocks":len(page_model.blocks)}})+'\n')
-        # #endregion
-
         # 0) Pre-check: Detect overlapping bounding boxes in source document
         # This helps identify if overlaps are due to source document issues
         text_blocks = [b for b in page_model.blocks if b.type == "text"]
@@ -397,11 +471,6 @@ def render_translated_pdf_perfect(
                     iou = overlap_area / (area1 + area2 - overlap_area) if (area1 + area2 - overlap_area) > 0 else 0
                     if iou > 0.01:  # Significant overlap (IoU > 1%)
                         overlapping_pairs.append((block1.id, block2.id, iou))
-                        # #region agent log
-                        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"J","location":"perfect_renderer.py:378","message":"Source bbox overlap detected","data":{"block1_id":block1.id,"block2_id":block2.id,"iou":iou,"bbox1":{"x0":bbox1.x0,"y0":bbox1.y0,"x1":bbox1.x1,"y1":bbox1.y1},"bbox2":{"x0":bbox2.x0,"y0":bbox2.y0,"x1":bbox2.x1,"y1":bbox2.y1}}})+'\n')
-                        # #endregion
                         logger.warning(
                             f"Page {page_idx+1}: Source blocks {block1.id} and {block2.id} have overlapping bounding boxes "
                             f"(IoU: {iou:.2%}). This may cause rendering overlaps."
@@ -427,29 +496,10 @@ def render_translated_pdf_perfect(
             is_header = block.meta.get("is_header", False)
             block_type = block.meta.get("block_type", "normal")
             has_translation = block.id in translations and translations.get(block.id, "").strip()
-            
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"perfect_renderer.py:347","message":"Checking block for redaction","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"has_translation":has_translation,"source_preview":source_text[:50]}})+'\n')
-            # #endregion
-
             replace, target_text, _source_text = _should_replace_block(
                 block, translations, translate_tables=translate_tables
             )
-            
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"perfect_renderer.py:356","message":"_should_replace_block result","data":{"block_id":block.id,"replace":replace,"has_target_text":bool(target_text),"target_preview":target_text[:50] if target_text else None}})+'\n')
-            # #endregion
-
             if not replace or not target_text:
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"C","location":"perfect_renderer.py:361","message":"Block NOT redacted","data":{"block_id":block.id,"is_header":is_header,"reason":"replace=False or no target_text"}})+'\n')
-                # #endregion
                 continue
 
             # CRITICAL: Use original bbox WITHOUT padding to prevent overlaps
@@ -464,21 +514,8 @@ def render_translated_pdf_perfect(
             page.add_redact_annot(rect, fill=(1, 1, 1))
             redacted_any = True
             redacted_block_ids.append(block.id)
-            
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"perfect_renderer.py:375","message":"Block REDACTED","data":{"block_id":block.id,"is_header":is_header}})+'\n')
-            # #endregion
-
         if redacted_any:
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"D","location":"perfect_renderer.py:380","message":"Redactions applied","data":{"page_idx":page_idx,"redacted_count":len(redacted_block_ids),"redacted_ids":redacted_block_ids}})+'\n')
-            # #endregion
-
         # 2) Insert translations
         rendered_block_ids = []
         for block in page_model.blocks:
@@ -489,13 +526,6 @@ def render_translated_pdf_perfect(
             stored_translation = translations.get(block.id, "")
             is_header = block.meta.get("is_header", False)
             block_type = block.meta.get("block_type", "normal")
-            
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"E","location":"perfect_renderer.py:395","message":"Processing block for rendering","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"has_translation":bool(stored_translation),"source_preview":source_text[:50]}})+'\n')
-            # #endregion
-            
             # DEBUG: Log what we have for this block (first 2 pages)
             if page_idx < 2:
                 logger.info(f"Page {page_idx+1}, Block {block.id}: Source='{source_text[:50]}...', Stored='{stored_translation[:50] if stored_translation else 'EMPTY'}...'")
@@ -505,35 +535,25 @@ def render_translated_pdf_perfect(
             replace, target_text, source_text_check = _should_replace_block(
                 block, translations, translate_tables=translate_tables
             )
-            
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"F","location":"perfect_renderer.py:408","message":"_should_replace_block result (render phase)","data":{"block_id":block.id,"replace":replace,"has_target_text":bool(target_text),"is_header":is_header}})+'\n')
-            # #endregion
-
             if not replace or not target_text:
                 # CRITICAL: Always render blocks - if no translation, use source text
                 # This ensures no blocks are omitted from the final PDF
                 if block.id not in translations or not translations.get(block.id, "").strip():
                     # Use source text as fallback to ensure block is rendered
-                    logger.debug(f"Page {page_idx+1}, Block {block.id}: Using source text as fallback (no translation)")
+                    logger.warning(
+                        f"Page {page_idx+1}, Block {block.id}: No translation found, "
+                        f"using source text as fallback. Source: '{source_text[:100]}'"
+                    )
                     target_text = source_text
-                    # #region agent log
-                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"G","location":"perfect_renderer.py:417","message":"Using source text fallback","data":{"block_id":block.id,"is_header":is_header,"reason":"no translation in dict"}})+'\n')
-                    # #endregion
+                    replace = True  # Force render with source text
                 else:
                     stored_trans = translations.get(block.id, "")
-                    logger.debug(f"Page {page_idx+1}, Block {block.id}: Using stored translation. Stored: '{stored_trans[:50]}...'")
+                    logger.info(
+                        f"Page {page_idx+1}, Block {block.id}: Using stored translation. "
+                        f"Length: {len(stored_trans)} chars, Preview: '{stored_trans[:50]}...'"
+                    )
                     target_text = stored_trans
-                    # #region agent log
-                    with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"G","location":"perfect_renderer.py:424","message":"Using stored translation","data":{"block_id":block.id,"is_header":is_header,"stored_preview":stored_trans[:50]}})+'\n')
-                    # #endregion
-                
+                    replace = True  # Force render with stored translation
                 # Continue to render with source or stored translation
                 # Don't skip the block - ensure it's rendered
             
@@ -550,11 +570,40 @@ def render_translated_pdf_perfect(
             target_text = NumberingDetector.preserve_numbering(source_text, target_text)
             
             # Preserve line breaks and paragraph formatting
+            # Note: These functions are stubs that return input unchanged
             from scitrans.utils.line_break_preserver import preserve_line_breaks, preserve_paragraph_spacing
-            target_text = preserve_line_breaks(source_text, target_text)
-            target_text = preserve_paragraph_spacing(source_text, target_text)
+            try:
+                target_text = preserve_line_breaks(source_text, target_text)
+            except TypeError:
+                # Stub version takes only 1 argument
+                target_text = preserve_line_breaks(target_text)
+            try:
+                target_text = preserve_paragraph_spacing(source_text, target_text)
+            except TypeError:
+                # Stub version takes only 1 argument
+                target_text = preserve_paragraph_spacing(target_text)
 
             base_font, base_size, flags = _get_block_base_style(block)
+            
+            # CRITICAL: Use normalized font size for consistency across document
+            # If we have a normalized size for this block, use it instead of the per-block size
+            if block.id in normalized_font_sizes:
+                normalized_size = normalized_font_sizes[block.id]
+                # Only use normalized size if it's close to the original (within 15%)
+                # This prevents forcing a very different size on a block that needs special sizing
+                size_ratio = normalized_size / base_size if base_size > 0 else 1.0
+                if 0.85 <= size_ratio <= 1.15:  # Within 15% of original
+                    logger.debug(
+                        f"Block {block.id}: Using normalized font size {normalized_size:.1f}pt "
+                        f"(original: {base_size:.1f}pt)"
+                    )
+                    base_size = normalized_size
+                else:
+                    logger.debug(
+                        f"Block {block.id}: Keeping original font size {base_size:.1f}pt "
+                        f"(normalized {normalized_size:.1f}pt too different)"
+                    )
+            
             font_key = _resolve_font_key(base_font, flags)
             
             # Try to pick font with fallback handling
@@ -581,9 +630,18 @@ def render_translated_pdf_perfect(
             original_rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
             
             # CRITICAL: Ensure rect is valid (not empty or inverted)
+            # Instead of skipping, fix invalid bboxes with minimum dimensions
             if original_rect.width <= 0 or original_rect.height <= 0:
-                logger.warning(f"Block {block.id} has invalid bbox: {original_rect}, skipping")
-                continue
+                logger.warning(f"Block {block.id} has invalid bbox: {original_rect}, fixing with minimum dimensions")
+                # Use minimum dimensions to ensure block is rendered
+                min_width = 50.0  # Minimum width in points
+                min_height = 10.0  # Minimum height in points
+                original_rect = fitz.Rect(
+                    original_rect.x0,
+                    original_rect.y0,
+                    original_rect.x0 + max(original_rect.width, min_width),
+                    original_rect.y0 + max(original_rect.height, min_height)
+                )
             
             # CRITICAL: Check for adjacent blocks that might cause overlaps
             # Strategy: Check against ALL blocks on the page (not just rendered ones) to prevent overlaps
@@ -625,11 +683,6 @@ def render_translated_pdf_perfect(
                         overlap_ratio = overlap_area / our_area if our_area > 0 else 0
                         
                         if overlap_ratio > 0.01:  # More than 1% overlap (more sensitive)
-                            # #region agent log
-                            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"L","location":"perfect_renderer.py:620","message":"Detected overlap with block","data":{"block_id":block.id,"other_block_id":other_block_model.id,"overlap_ratio":overlap_ratio,"x_overlap":x_overlap,"y_overlap":y_overlap}})+'\n')
-                            # #endregion
                             logger.warning(
                                 f"Block {block.id}: Overlaps with block {other_block_model.id} "
                                 f"({overlap_ratio:.1%} overlap). Adjusting rectangle."
@@ -671,11 +724,6 @@ def render_translated_pdf_perfect(
             
             # Log if we adjusted the rectangle
             if safe_rect.x0 != original_rect.x0 or safe_rect.y0 != original_rect.y0 or safe_rect.x1 != original_rect.x1 or safe_rect.y1 != original_rect.y1:
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"K","location":"perfect_renderer.py:650","message":"Adjusted rect to prevent overlap","data":{"block_id":block.id,"original":{"x0":original_rect.x0,"y0":original_rect.y0,"x1":original_rect.x1,"y1":original_rect.y1},"safe":{"x0":safe_rect.x0,"y0":safe_rect.y0,"x1":safe_rect.x1,"y1":safe_rect.y1}}})+'\n')
-                # #endregion
                 logger.info(
                     f"Block {block.id}: Adjusted rectangle to prevent overlap. "
                     f"Original: {original_rect.width:.1f}x{original_rect.height:.1f}, "
@@ -698,30 +746,12 @@ def render_translated_pdf_perfect(
                 cfg=cfg,
                 align=align,
             )
-
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"E","location":"perfect_renderer.py:667","message":"Font size fitted","data":{"block_id":block.id,"base_size":base_size,"fitted_size":fitted_size,"min_font_size":cfg.min_font_size,"text_length":len(target_text),"rect_width":rect.width,"rect_height":rect.height,"shrink_ratio":fitted_size/base_size if base_size > 0 else 0}})+'\n')
-            # #endregion
-
             # CRITICAL: Verify the fitted size is reasonable
             if fitted_size < cfg.min_font_size:
                 logger.warning(
                     f"Block {block.id}: Fitted font size {fitted_size:.2f} is below minimum "
                     f"{cfg.min_font_size}, text may be too long for block"
                 )
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"quality-test","hypothesisId":"E","location":"perfect_renderer.py:680","message":"Font size below minimum","data":{"block_id":block.id,"fitted_size":fitted_size,"min_font_size":cfg.min_font_size}})+'\n')
-                # #endregion
-
-            # #region agent log
-            with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"H","location":"perfect_renderer.py:530","message":"About to render block","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"target_preview":target_text[:50],"font_size":fitted_size}})+'\n')
-            # #endregion
 
             try:
                 # CRITICAL: Verify text fits before inserting
@@ -740,17 +770,29 @@ def render_translated_pdf_perfect(
                 
                 # CRITICAL: Check if text actually fit
                 if result < 0:
-                    logger.warning(
-                        f"Block {block.id}: Text overflow detected (result={result:.2f}), "
-                        f"font size {fitted_size:.2f} may be too large. "
-                        f"Text length: {len(target_text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
-                    )
-                    # Try with progressively smaller font sizes
+                    # PHASE 3.3: Calculate overflow ratio for smarter logging
+                    overflow_ratio = abs(result) / rect.height if rect.height > 0 else 0
+                    
+                    # Don't log ERROR for minor overflow (< 10% over)
+                    if overflow_ratio < 0.10:
+                        logger.info(
+                            f"Block {block.id}: Minor overflow detected ({overflow_ratio:.1%}), adjusting font size. "
+                            f"Text length: {len(target_text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Block {block.id}: Significant overflow detected (result={result:.2f}, {overflow_ratio:.1%}), "
+                            f"font size {fitted_size:.2f} may be too large. "
+                            f"Text length: {len(target_text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
+                        )
+                    # Try with progressively smaller font sizes (less aggressive to preserve readability)
+                    # Start closer to fitted_size and reduce more gradually
                     emergency_sizes = [
-                        max(cfg.min_font_size, fitted_size * 0.9),
-                        max(cfg.min_font_size, fitted_size * 0.8),
-                        max(cfg.min_font_size, fitted_size * 0.7),
-                        cfg.min_font_size,
+                        max(cfg.min_font_size, fitted_size * 0.95),  # Only 5% reduction first
+                        max(cfg.min_font_size, fitted_size * 0.90),  # Then 10%
+                        max(cfg.min_font_size, fitted_size * 0.85),  # Then 15%
+                        max(cfg.min_font_size, fitted_size * 0.80),  # Then 20%
+                        cfg.min_font_size,  # Last resort: minimum size
                     ]
                     
                     result = -1
@@ -772,23 +814,23 @@ def render_translated_pdf_perfect(
                     
                     if result < 0:
                         # Last resort: intelligently truncate text
-                        logger.error(
-                            f"Block {block.id}: Text still doesn't fit even with minimum size {cfg.min_font_size:.2f}. "
-                            f"Intelligently truncating text to prevent overflow."
+                        # PHASE 3.3: Use WARNING instead of ERROR for expected truncation
+                        logger.warning(
+                            f"Block {block.id}: Text requires truncation even with minimum size {cfg.min_font_size:.2f}. "
+                            f"Applying intelligent truncation to prevent overflow."
                         )
-                        # Estimate max chars that fit (conservative estimate)
-                        chars_per_line = max(1, int(rect.width / (cfg.min_font_size * 0.5)))
+                        # Estimate max chars that fit (more generous estimate to avoid truncation)
+                        # Use average character width (0.6 * font_size) instead of 0.5 for better fit
+                        chars_per_line = max(1, int(rect.width / (cfg.min_font_size * 0.6)))
                         max_lines = max(1, int(rect.height / (cfg.min_font_size * cfg.line_height)))
                         max_chars = chars_per_line * max_lines
                         
+                        # Increase max_chars by 20% to be more generous and avoid truncation
+                        max_chars = int(max_chars * 1.2)
+                        
                         if len(target_text) > max_chars:
-                            # Try to truncate at word boundary
-                            truncated = target_text[:max_chars]
-                            last_space = truncated.rfind(' ')
-                            if last_space > max_chars * 0.8:  # If we can find a space near the end
-                                target_text = truncated[:last_space] + "..."
-                            else:
-                                target_text = truncated + "..."
+                            # PHASE 3.2: Use intelligent truncation at word boundaries
+                            target_text = _intelligent_truncate(target_text, max_chars)
                         
                         # Final attempt with truncated text
                         result = _try_insert_textbox(
@@ -803,34 +845,18 @@ def render_translated_pdf_perfect(
                             color=text_color,
                         )
                         if result < 0:
-                            logger.error(
-                                f"Block {block.id}: CRITICAL - Text still doesn't fit after truncation. "
-                                f"Block may be too small or text too long. Rendering what we can."
+                            # PHASE 3.3: Use WARNING for truncation issues (expected in some cases)
+                            logger.warning(
+                                f"Block {block.id}: Text doesn't fit after truncation. "
+                                f"Block may be too small or text too long. Rendering truncated content."
                             )
                 
                 rendered_block_ids.append(block.id)
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"H","location":"perfect_renderer.py:548","message":"Block RENDERED successfully","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type}})+'\n')
-                # #endregion
             except Exception as e:
-                # #region agent log
-                with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"H","location":"perfect_renderer.py:553","message":"Block RENDER FAILED","data":{"block_id":block.id,"is_header":is_header,"block_type":block_type,"error":str(e)}})+'\n')
-                # #endregion
                 logger.error(f"Failed to render block {block.id}: {e}", exc_info=True)
 
             if cfg.debug_draw_boxes:
                 page.draw_rect(rect, color=(0, 1, 0), width=0.5)  # green
-        
-        # #region agent log
-        with open('/Users/kv.kn/Desktop/Research/SciTrans_fixed/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"I","location":"perfect_renderer.py:563","message":"Page rendering complete","data":{"page_idx":page_idx,"total_blocks":len(page_model.blocks),"rendered_count":len(rendered_block_ids),"rendered_ids":rendered_block_ids}})+'\n')
-        # #endregion
-
     pdf.save(output_pdf)
     pdf.close()
     logger.info("Perfect rendering complete: %s", output_pdf)

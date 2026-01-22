@@ -4,6 +4,27 @@ import re
 from dataclasses import dataclass
 
 
+# Instruction spillover keywords that should NEVER appear in translations
+SPILLOVER_PATTERNS = [
+    "placeholder", "conserver", "mémorisez", "rappelez-vous",
+    "critique", "critical", "do not", "ne pas", "forbidden", "interdit",
+    "must", "should", "required", "mandatory", "obligatoire",
+    "conserve", "remember", "retain", "preserve exactly",
+]
+
+
+def has_instruction_spillover(text: str) -> bool:
+    """Check if translation contains instruction spillover (hallucination indicator).
+    
+    Returns True if any instruction keywords are found in the text.
+    """
+    text_lower = text.lower()
+    for pattern in SPILLOVER_PATTERNS:
+        if pattern in text_lower:
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class RerankScore:
     """Quality score components for translation candidates."""
@@ -12,7 +33,11 @@ class RerankScore:
     glossary_compliance: float  # 0.0-1.0 based on glossary term matches
     numeric_stability: float  # 0.0-1.0 based on number preservation
     format_stability: float  # 0.0-1.0 based on bullet/line-break preservation
-    total: float  # Weighted sum
+    semantic_similarity: float = 1.0  # 0.0-1.0 based on structure/semantic preservation
+    identity_penalty: float = 1.0  # 0.0-1.0 penalty for identity translations
+    length_ratio: float = 1.0  # 0.0-1.0 penalty for unusual length ratios
+    spillover_penalty: float = 1.0  # 0.0-1.0 penalty for instruction spillover
+    total: float = 0.0  # Weighted sum
 
     def is_valid(self) -> bool:
         """A candidate is invalid if placeholders are missing (hard gate)."""
@@ -97,6 +122,162 @@ def score_format_stability(source: str, candidate: str) -> float:
     return bullet_score * 0.5 + line_score * 0.5
 
 
+def score_identity_penalty(source: str, candidate: str) -> float:
+    """Heavily penalize identity translations (source returned unchanged).
+    
+    Returns:
+        1.0 if clearly different from source
+        0.1 if highly similar (>85% similarity = identity translation)
+        Value between 0.1-1.0 based on similarity
+    """
+    if not source or not candidate:
+        return 1.0
+    
+    # Normalize for comparison
+    source_norm = " ".join(source.lower().split())
+    cand_norm = " ".join(candidate.lower().split())
+    
+    # Calculate similarity
+    from difflib import SequenceMatcher
+    similarity = SequenceMatcher(None, source_norm, cand_norm).ratio()
+    
+    # Heavy penalty for high similarity (identity translation)
+    if similarity > 0.85:
+        return 0.1  # 90% penalty
+    elif similarity > 0.75:
+        return 0.3  # 70% penalty  
+    elif similarity > 0.65:
+        return 0.6  # 40% penalty
+    
+    return 1.0  # No penalty
+
+
+def score_length_ratio(source: str, candidate: str) -> float:
+    """Penalize unusual length ratios (hallucination indicator).
+    
+    Typical expansions:
+    - English→French: ~15-20% longer
+    - English→German: ~10-15% longer
+    
+    Returns:
+        1.0 if length ratio is reasonable (0.7-1.5x)
+        0.3 if ratio is extreme (>2x or <0.5x) - likely hallucination
+        Value between 0.3-1.0 for unusual ratios
+    """
+    if not source:
+        return 1.0
+    
+    ratio = len(candidate) / len(source)
+    
+    # Extreme ratios indicate hallucination or truncation
+    if ratio > 2.5 or ratio < 0.4:
+        return 0.2  # 80% penalty - very likely hallucination
+    elif ratio > 2.0 or ratio < 0.5:
+        return 0.3  # 70% penalty - likely hallucination
+    elif ratio > 1.8 or ratio < 0.6:
+        return 0.6  # 40% penalty - unusual but possible
+    elif ratio > 1.5 or ratio < 0.7:
+        return 0.8  # 20% penalty - slightly unusual
+    
+    return 1.0  # No penalty
+
+
+def score_spillover_penalty(candidate: str) -> float:
+    """Penalize instruction spillover (hallucination indicator).
+    
+    Checks if translation contains instruction keywords that should NEVER
+    appear in actual translations (e.g., "placeholder", "critical", "must").
+    
+    Returns:
+        1.0 if no spillover detected
+        0.2 if spillover detected (80% penalty)
+    """
+    if has_instruction_spillover(candidate):
+        return 0.2  # 80% penalty for instruction spillover
+    return 1.0  # No penalty
+
+
+def score_semantic_similarity(source: str, candidate: str, is_header: bool = False) -> float:
+    """Score how well translation matches source structure and semantics.
+    
+    Checks:
+    1. Section/Chapter numbering preservation (e.g., "Section 1: Title" → "Section 1: Titre")
+    2. Length ratio (French ~15% longer than English, shouldn't be >2x or <0.5x)
+    3. Structure preservation (colons, parentheses, dashes)
+    
+    Returns:
+        Score from 0.0 to 1.0, where 1.0 is perfect preservation
+    """
+    if not source.strip() or not candidate.strip():
+        return 0.5
+    
+    score = 1.0
+    
+    # Check if source has section/chapter pattern
+    section_pattern = r'^(Section|Chapter|Part|Appendix)\s+(\d+|[IVX]+)[:\s]+'
+    source_match = re.match(section_pattern, source.strip(), re.IGNORECASE)
+    
+    if source_match and is_header:
+        # Source has section structure - candidate should preserve it
+        keyword, number = source_match.groups()
+        
+        # Check if candidate has similar structure (allowing translation of keyword)
+        # French: Section → Section, Chapter → Chapitre, Part → Partie, Appendix → Annexe
+        candidate_pattern = r'^(Section|Chapitre|Chapter|Partie|Part|Annexe|Appendix)\s+(\d+|[IVX]+)[:\s]+'
+        candidate_match = re.match(candidate_pattern, candidate.strip(), re.IGNORECASE)
+        
+        if not candidate_match:
+            # Missing section structure - major penalty
+            score -= 0.6
+        else:
+            # Check if number is preserved
+            cand_number = candidate_match.group(2)
+            if cand_number != number:
+                # Number changed - penalty
+                score -= 0.3
+    
+    # Check length ratio (reasonable expansion/contraction)
+    length_ratio = len(candidate) / len(source) if source else 1.0
+    if length_ratio < 0.5 or length_ratio > 2.5:
+        # Extreme length change - likely wrong translation
+        score -= 0.4
+    elif length_ratio < 0.7 or length_ratio > 1.8:
+        # Unusual length change - moderate penalty
+        score -= 0.2
+    
+    # Check structure preservation (colons, parentheses, dashes)
+    source_has_colon = ':' in source
+    candidate_has_colon = ':' in candidate
+    if source_has_colon != candidate_has_colon:
+        score -= 0.1
+    
+    # Check for completely unrelated content (word overlap)
+    # This catches cases like "Section 1: Introduction" → "Document layout result"
+    source_words = set(re.findall(r'\w+', source.lower()))
+    candidate_words = set(re.findall(r'\w+', candidate.lower()))
+    
+    # Remove common words that translate directly
+    common_numbers = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'}
+    source_words -= common_numbers
+    candidate_words -= common_numbers
+    
+    if source_words and candidate_words:
+        # Calculate overlap (allowing for translation)
+        # For headers, we expect low overlap (translation changes words)
+        # But if overlap is 0 and source is short, it's suspicious
+        if len(source_words) <= 5:  # Short header
+            # For short headers, complete lack of overlap is suspicious
+            # (e.g., "Section 1: Introduction" and "Document layout result" have no overlap)
+            if not (source_words & candidate_words):
+                # Check if it looks like random/unrelated content
+                suspicious_words = {'result', 'résultat', 'document', 'layout', 'mise', 'page', 'en'}
+                if candidate_words & suspicious_words:
+                    # Contains suspicious generic words - likely wrong translation
+                    score -= 0.5
+    
+    return max(0.0, score)
+
+
 def rerank_candidates(
     candidates: list[str],
     source_text: str,
@@ -127,6 +308,10 @@ def rerank_candidates(
         "glossary_compliance": 3.0,
         "numeric_stability": 2.0,
         "format_stability": 1.0,
+        "semantic_similarity": 4.0,  # Semantic/structure preservation
+        "identity_penalty": 8.0,  # NEW: Identity translation detection (critical)
+        "length_ratio": 3.0,  # NEW: Hallucination detection via length
+        "spillover_penalty": 6.0,  # NEW: Instruction spillover detection
     }
     w = weights or default_weights
 
@@ -142,51 +327,49 @@ def rerank_candidates(
     scored: list[tuple[str, RerankScore]] = []
 
     for idx, candidate in enumerate(candidates):
+        # Original scoring dimensions
         ph_score = score_placeholder_preservation(candidate, registry)
         gloss_score = score_glossary_compliance(candidate, glossary)
         num_score = score_numeric_stability(source_text, candidate)
         fmt_score = score_format_stability(source_text, candidate)
+        sem_score = score_semantic_similarity(source_text, candidate, is_header=is_header)
+        
+        # NEW: Additional scoring dimensions for quality
+        identity_score = score_identity_penalty(source_text, candidate)
+        length_score = score_length_ratio(source_text, candidate)
+        spillover_score = score_spillover_penalty(candidate)
 
+        # Calculate weighted total
         base_total = (
             ph_score * w["placeholder_preservation"]
             + gloss_score * w["glossary_compliance"]
             + num_score * w["numeric_stability"]
             + fmt_score * w["format_stability"]
+            + sem_score * w.get("semantic_similarity", 4.0)
+            + identity_score * w.get("identity_penalty", 8.0)  # NEW
+            + length_score * w.get("length_ratio", 3.0)  # NEW
+            + spillover_score * w.get("spillover_penalty", 6.0)  # NEW
         )
-        
-        # Enhanced scoring: Add identity translation penalty
-        # Check if candidate is too similar to source (likely identity translation)
-        identity_penalty = 0.0
-        if source_text.strip() and candidate.strip():
-            source_normalized = " ".join(source_text.strip().split()).lower()
-            candidate_normalized = " ".join(candidate.strip().split()).lower()
-            if source_normalized == candidate_normalized:
-                # Exact match = identity translation (bad for headers/bullets)
-                identity_penalty = -5.0 if is_header else -3.0
-            else:
-                # Check similarity using simple character overlap
-                source_chars = set(source_normalized)
-                candidate_chars = set(candidate_normalized)
-                if source_chars and candidate_chars:
-                    overlap_ratio = len(source_chars & candidate_chars) / len(source_chars | candidate_chars)
-                    if overlap_ratio > 0.9:  # More than 90% character overlap
-                        identity_penalty = -2.0 if is_header else -1.0
 
         # Apply quality bonus based on candidate position (earlier = higher quality backend)
-        # For cascade_free: first candidate is DeepSeek, last is Google
+        # For cascade_free: first candidate is Ollama, last is Google
         quality_adjustment = 0.0
         if len(candidates) > 1:
             # Earlier candidates (from better backends) get bonus
             position_bonus = (len(candidates) - idx) * 0.5
             quality_adjustment = position_bonus
 
-        total = base_total + quality_adjustment + identity_penalty
+        total = base_total + quality_adjustment
 
         score = RerankScore(
             placeholder_preservation=ph_score,
             glossary_compliance=gloss_score,
             numeric_stability=num_score,
             format_stability=fmt_score,
+            semantic_similarity=sem_score,
+            identity_penalty=identity_score,  # NEW
+            length_ratio=length_score,  # NEW
+            spillover_penalty=spillover_score,  # NEW
             total=total,
         )
         scored.append((candidate, score))

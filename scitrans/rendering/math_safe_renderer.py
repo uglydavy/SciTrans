@@ -13,22 +13,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RenderConfig:
-    """Configuration for math-safe rendering.
+    """Configuration for layout-preserving rendering.
 
-    The ``min_font_size`` has been lowered to 4.0 points to ensure that longer
-    translations can still be rendered within the available bounding box. Tests
-    expect that the renderer never produces a blank region merely because a
-    translation does not fit at the previous default minimum size. Other
-    parameters remain unchanged and control shrink ratios, line heights, and
-    overflow margins.
+    CRITICAL: These defaults are tuned for maximum layout preservation and
+    consistent font sizing across the document. The goal is to maintain the
+    original document's visual appearance as closely as possible.
+    
+    - Moderate shrinking allowed (down to 85% of original)
+    - Reasonable minimum font size (7.0pt - still readable)
+    - Standard line height (1.2 for readability)
+    - Minimal margins to maximize space while preventing overlaps
     """
 
-    # Minimum font size. Lowered from 8.0 to 4.0 so that more content fits.
-    min_font_size: float = 4.0
-    # Allow shrinking to 70% of original (more aggressive to prevent overflow)
-    max_shrink_ratio: float = 0.7
-    # Tighter line height to fit more text
-    line_height: float = 1.15
+    # Minimum font size. Set to 10.0pt for readability (NEVER go below this)
+    # Increased from 7.0pt to ensure text is readable
+    min_font_size: float = 10.0
+    # Allow shrinking to 80% of original (more aggressive to fit text, but still readable)
+    max_shrink_ratio: float = 0.80
+    # Standard line height for readability
+    line_height: float = 1.2
     # No padding to prevent overlaps
     redact_padding: float = 0.0
     # pts difference between left/right margins for centering
@@ -38,8 +41,8 @@ class RenderConfig:
     debug_draw_boxes: bool = False
     # Break long blocks across pages if they don't fit
     enable_page_breaking: bool = True
-    # 5% margin to prevent edge overflow
-    overflow_margin: float = 0.05
+    # 1% margin to prevent edge overflow (minimal margin for maximum space)
+    overflow_margin: float = 0.01
 
 
 def _infer_alignment(page_width: float, x0: float, x1: float, threshold: float) -> int:
@@ -105,20 +108,21 @@ def _fit_font_size(
 ) -> float:
     """Binary-search the largest font size that fits inside rect.
     
-    CRITICAL: Ensures text fits completely within the rectangle to prevent overlaps.
-    Returns a font size that guarantees no overflow.
+    CRITICAL: Preserves original font size whenever possible.
+    Only shrinks when absolutely necessary to prevent overflow.
     
-    Enhanced algorithm:
-    - Uses configurable overflow margin
-    - More aggressive binary search with better convergence
-    - Multiple verification passes to ensure text fits
+    Strategy:
+    1. Try original size first
+    2. Only shrink if original doesn't fit
+    3. Use moderate margins and conservative shrinking
+    4. Maintain consistency by preferring original size
     """
 
     if not text.strip():
         return base_size
 
-    # CRITICAL: Add margin to prevent edge cases where text might overflow
-    # Use configurable margin (default 5%) to ensure text stays within bounds
+    # CRITICAL: Use minimal margin to maximize available space
+    # Smaller margin = more space = less need to shrink = more consistent sizing
     margin = cfg.overflow_margin
     safe_rect = fitz.Rect(
         rect.x0 + rect.width * margin,
@@ -130,7 +134,32 @@ def _fit_font_size(
     # Ensure safe_rect is valid (not empty or inverted)
     if safe_rect.width <= 0 or safe_rect.height <= 0:
         safe_rect = rect  # Fallback to original if margin makes it invalid
-        logger.warning(f"Safe rect became invalid, using original rect")
+        logger.debug(f"Safe rect became invalid, using original rect")
+
+    # CRITICAL: Try original size first - prefer preserving it
+    scratch = fitz.open()
+    sp = scratch.new_page(width=page.rect.width, height=page.rect.height)
+    ret = _try_insert_textbox(
+        sp,
+        safe_rect,
+        text,
+        fontname=fontname,
+        fontfile=fontfile,
+        fontsize=base_size,
+        align=align,
+        line_height=cfg.line_height,
+    )
+    scratch.close()
+    
+    if ret >= 0:
+        # Original size fits - use it! This ensures consistency
+        return base_size
+
+    # Original size doesn't fit - need to shrink
+    logger.debug(
+        f"Original font size {base_size:.2f} doesn't fit, shrinking. "
+        f"Text length: {len(text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
+    )
 
     # Calculate bounds for binary search
     lo = max(cfg.min_font_size, base_size * cfg.max_shrink_ratio)
@@ -141,8 +170,8 @@ def _fit_font_size(
         return base_size
 
     best = lo
-    # Binary search with more iterations for better precision
-    for iteration in range(25):  # Increased iterations for better precision
+    # PHASE 3.1: Binary search with more iterations for precision (30 iterations)
+    for iteration in range(30):
         mid = (lo + hi) / 2.0
         
         # Use scratch page for dry-run testing
@@ -150,7 +179,7 @@ def _fit_font_size(
         sp = scratch.new_page(width=page.rect.width, height=page.rect.height)
         ret = _try_insert_textbox(
             sp,
-            safe_rect,  # Use safe_rect to ensure margin
+            safe_rect,
             text,
             fontname=fontname,
             fontfile=fontfile,
@@ -168,39 +197,32 @@ def _fit_font_size(
             # Text doesn't fit - try smaller size
             hi = mid
         
-        # Early exit if we've converged (within 0.05pt)
+        # Early exit if we've converged (within 0.05pt - tighter convergence)
         if hi - lo < 0.05:
             break
 
-    # CRITICAL: Multiple verification passes to ensure text actually fits
-    # Sometimes the binary search can give a false positive
-    verification_passes = 3
-    for pass_num in range(verification_passes):
-        scratch = fitz.open()
-        sp = scratch.new_page(width=page.rect.width, height=page.rect.height)
-        final_check = _try_insert_textbox(
-            sp,
-            safe_rect,
-            text,
-            fontname=fontname,
-            fontfile=fontfile,
-            fontsize=best,
-            align=align,
-            line_height=cfg.line_height,
+    # Single verification pass to ensure text actually fits
+    scratch = fitz.open()
+    sp = scratch.new_page(width=page.rect.width, height=page.rect.height)
+    final_check = _try_insert_textbox(
+        sp,
+        safe_rect,
+        text,
+        fontname=fontname,
+        fontfile=fontfile,
+        fontsize=best,
+        align=align,
+        line_height=cfg.line_height,
+    )
+    scratch.close()
+    
+    if final_check < 0:
+        # Text still doesn't fit - reduce further as last resort
+        best = max(cfg.min_font_size, best * 0.95)
+        logger.warning(
+            f"Font size {best:.2f} still doesn't fit after adjustment. "
+            f"Text may be truncated. Text length: {len(text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
         )
-        scratch.close()
-        
-        if final_check >= 0:
-            # Text fits - we're good
-            break
-        else:
-            # Text still doesn't fit - reduce further
-            best = max(cfg.min_font_size, best * 0.95)  # Reduce by 5% per pass
-            if pass_num == verification_passes - 1:
-                logger.warning(
-                    f"Font size {best:.2f} still doesn't fit after {verification_passes} passes. "
-                    f"Text length: {len(text)}, Block size: {rect.width:.1f}x{rect.height:.1f}"
-                )
 
     return best
 
