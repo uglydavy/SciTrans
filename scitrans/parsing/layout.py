@@ -89,6 +89,52 @@ def detect_columns(blocks: list[Block], page_width: float, min_gap: float = 30.0
 # PHASE 3: Table and caption heuristics
 
 
+def _is_heading_like(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if not re.search(r"[A-Za-z]", stripped):
+        return False
+    lowered = stripped.lower()
+    if re.match(r"^\d+(?:\.\d+)*\s*[.:]?\s+\w+", stripped):
+        return True
+    keywords = {
+        "section",
+        "chapter",
+        "introduction",
+        "methodology",
+        "methods",
+        "results",
+        "conclusion",
+        "abstract",
+        "summary",
+        "discussion",
+        "background",
+        "related work",
+        "future work",
+    }
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _split_columns(line: str) -> list[str]:
+    if "|" in line:
+        return [p.strip() for p in line.split("|") if p.strip()]
+    if "\t" in line:
+        return [p.strip() for p in line.split("\t") if p.strip()]
+    return [p.strip() for p in re.split(r"\s{2,}", line) if p.strip()]
+
+
+def _consistent_column_counts(lines: list[str]) -> bool:
+    counts = []
+    for line in lines:
+        cols = _split_columns(line)
+        if len(cols) >= 2:
+            counts.append(len(cols))
+    if len(counts) < 2:
+        return False
+    return max(counts) - min(counts) <= 1
+
+
 def is_table_candidate(block: Block) -> bool:
     """Enhanced table detection with better heuristics.
     
@@ -108,7 +154,7 @@ def is_table_candidate(block: Block) -> bool:
     if block.meta.get("is_header") or block.meta.get("block_type") in ("title", "header", "subheader"):
         return False
 
-    text = "".join(sp.text for ln in block.lines for sp in ln.spans)
+    text = "\n".join("".join(sp.text for sp in ln.spans) for ln in block.lines)
     if not text.strip():
         return False
 
@@ -116,60 +162,66 @@ def is_table_candidate(block: Block) -> bool:
     
     # Exclude short single-line text that looks like section titles/headers
     if len(lines) == 1 and len(text) < 100:
-        # Check if it contains common section title keywords
-        section_keywords = ["Section", "Chapter", "Introduction", "Methodology", 
-                           "Results", "Conclusion", "Abstract", "Summary",
-                           "Discussion", "Background", "Related Work"]
-        if any(keyword in text for keyword in section_keywords):
+        if _is_heading_like(text):
             return False
         
         # Check if it looks like a title (ends with colon, short, capitalized)
         if text.strip().endswith(':') and len(text.strip()) < 50:
             return False
     
-    # Strong signals for tables (very reliable)
-    if "|" in text or "\t" in text:
-        return True
+    signals = 0
+    has_separators = "|" in text or "\t" in text
+    if has_separators:
+        signals += 1
 
-    # For single-line blocks: require STRONG evidence
+    if len(lines) >= 2 and _consistent_column_counts(lines):
+        signals += 1
+
+    # For single-line blocks: allow strong separators or aligned columns
     if len(lines) < 2:
-        # Must have both double spaces AND sufficient numeric values
+        if has_separators:
+            cols = _split_columns(text)
+            if len(cols) >= 2:
+                return True
+
         if "  " in text:
+            cols = _split_columns(text)
             parts = text.split()
             numeric_parts = [p for p in parts if any(c.isdigit() for c in p)]
-            
-            # Increased threshold from 3 to 4 numeric values
-            if len(numeric_parts) >= 4:
-                # Additional validation: check for consistent spacing (table-like structure)
-                import re
+
+            # Column structure with 3+ columns, or numeric-heavy single-line
+            if len(cols) >= 3 or len(numeric_parts) >= 4:
                 double_spaces = re.findall(r'  +', text)
-                # Must have at least 2 double-space separators for table-like structure
                 if len(double_spaces) >= 2:
-                    # Check that spacing is relatively consistent
                     space_lengths = [len(s) for s in double_spaces]
-                    if max(space_lengths) <= min(space_lengths) * 3:  # Not too variable
+                    if max(space_lengths) <= min(space_lengths) * 3:
                         return True
-        
-        # Single-line without strong evidence = not a table
+
         return False
 
     # For multi-line blocks: check for table-like structure
-    # Signal 1: High numeric density (more conservative threshold)
+    # Signal 1: High numeric density
     digits = sum(1 for c in text if c.isdigit())
     if digits > 0:
         numeric_density = digits / max(len(text), 1)
-        # Increased threshold from 0.25 to 0.30 to reduce false positives
-        if numeric_density > 0.30:
-            return True
+        # Slightly relaxed threshold for multi-line numeric tables
+        if numeric_density > 0.22:
+            signals += 1
 
-    # Signal 2: Repeated double-spaces in multiple lines (column structure)
+    # Signal 2: Stacked table rows (many short lines, mixed numeric)
+    short_lines = [line for line in lines if line.strip() and len(line.strip()) <= 20]
+    numeric_lines = [line for line in lines if any(c.isdigit() for c in line)]
+    if len(lines) >= 6 and len(short_lines) / len(lines) >= 0.7 and len(numeric_lines) / len(lines) >= 0.3:
+        return True
+
+    # Signal 3: Repeated double-spaces in multiple lines (column structure)
     if "  " in text:
         lines_with_double_spaces = [line for line in lines if "  " in line]
         # At least 50% of lines should have double spaces for a table
         if len(lines_with_double_spaces) >= len(lines) * 0.5:
-            return True
+            signals += 1
 
-    return False
+    return signals >= 2
 
 
 def is_caption_candidate(block: Block) -> bool:
@@ -393,15 +445,17 @@ def classify_block_type(block: Block) -> str:
         Block type: "title", "header", "subheader", "paragraph", "list_item"
     """
     # Check font size
-    avg_font_size = _get_avg_font_size(block)
+    avg_font_size = block.meta.get("median_font_size") or _get_avg_font_size(block)
     
     # Check content patterns
     text = _get_block_text(block)
     text_lower = text.lower().strip()
     text_len = len(text)
     
-    # Title: Large font (>= 16pt), short text, centered or at top
-    if avg_font_size >= 16.0 and text_len < 100:
+    script_category = block.meta.get("script_category", "latin")
+
+    # Title: Large font (>= 16pt), short text
+    if avg_font_size >= 16.0 and text_len < 120:
         return "title"
     
     # Header: Medium-large font (>= 14pt) OR starts with section pattern
@@ -410,7 +464,7 @@ def classify_block_type(block: Block) -> str:
         return "header"
     
     # Subheader: Medium font (>= 12pt), short text
-    if avg_font_size >= 12.0 and text_len < 150:
+    if avg_font_size >= 12.0 and text_len < (120 if script_category == "cjk" else 150):
         return "subheader"
     
     # List item: Starts with bullet or number

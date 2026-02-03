@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from scitrans.core.models import BBox, Block, Line, Span, Style
+from scitrans.core.models import BBox, Block, Line, Span, SpanStyle
 from scitrans.masking.engine import MaskingEngine
 from scitrans.parsing.layout import is_table_candidate
 
@@ -124,6 +124,36 @@ class TestFalsePersonNameMasking:
                 f"False PERSON_NAME mask for term ending with keyword: {text}"
 
 
+class TestNeverMaskGuardrails:
+    """Ensure section headings and academic terms are never masked."""
+
+    def setup_method(self):
+        self.engine = MaskingEngine()
+
+    def test_academic_headings_never_masked(self):
+        test_cases = [
+            "Abstract",
+            "Introduction",
+            "Results",
+            "Discussion",
+            "Conclusion",
+            "References",
+            "Acknowledgements",
+            "Materials and Methods",
+            "1. Introduction",
+            "Section 2: Results",
+            "Chapter 3: Conclusion",
+        ]
+
+        guarded_kinds = {"PERSON_NAME", "PLACE_NAME", "TOC_ENTRY", "FIGURE_CAPTION"}
+        for text in test_cases:
+            masked, registry, counts = self.engine.mask(text)
+            assert masked == text, f"Guardrail altered heading: {text} → {masked}"
+            assert not guarded_kinds.intersection(counts.keys()), (
+                f"Guardrail failed for: {text} (counts: {counts})"
+            )
+
+
 class TestRealPersonNamesMasking:
     """Test that actual person names ARE still correctly masked."""
     
@@ -198,16 +228,20 @@ class TestBlockContextValidation:
     
     def _create_block(self, text: str, is_header: bool = False) -> Block:
         """Helper to create a test block."""
-        style = Style(font="Arial", size=12.0, flags=0, color=0)
-        span = Span(text=text, style=style)
-        line = Line(spans=[span], bbox=BBox(0, 0, 100, 10))
+        style = SpanStyle(font="Arial", size=12.0, flags=0, color=0)
+        span = Span(
+            text=text,
+            bbox=BBox(x0=0, y0=0, x1=100, y1=10),
+            style=style,
+        )
+        line = Line(spans=[span], bbox=BBox(x0=0, y0=0, x1=100, y1=10))
         
         meta = {"is_header": is_header} if is_header else {}
         
         return Block(
             id="test_block",
             type="text",
-            bbox=BBox(0, 0, 100, 20),
+            bbox=BBox(x0=0, y0=0, x1=100, y1=20),
             lines=[line],
             meta=meta
         )
@@ -236,13 +270,17 @@ class TestTableDetectionImprovements:
     
     def _create_text_block(self, text: str, is_header: bool = False) -> Block:
         """Helper to create a text block for testing."""
-        style = Style(font="Arial", size=12.0, flags=0, color=0)
+        style = SpanStyle(font="Arial", size=12.0, flags=0, color=0)
         spans = []
         lines = []
         
         for line_text in text.split('\n'):
-            span = Span(text=line_text, style=style)
-            line = Line(spans=[span], bbox=BBox(0, 0, 100, 10))
+            span = Span(
+                text=line_text,
+                bbox=BBox(x0=0, y0=0, x1=100, y1=10),
+                style=style,
+            )
+            line = Line(spans=[span], bbox=BBox(x0=0, y0=0, x1=100, y1=10))
             lines.append(line)
         
         meta = {"is_header": is_header} if is_header else {}
@@ -250,7 +288,7 @@ class TestTableDetectionImprovements:
         return Block(
             id="test_block",
             type="text",
-            bbox=BBox(0, 0, 100, len(lines) * 10),
+            bbox=BBox(x0=0, y0=0, x1=100, y1=len(lines) * 10),
             lines=lines,
             meta=meta
         )

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import os
 import time
 
 from scitrans.translation.backends.base import TranslateRequest, TranslateResult
+from scitrans.translation.backends.config import get_backend_config, get_backend_value
 
 
 class DeepSeekBackend:
@@ -11,9 +11,9 @@ class DeepSeekBackend:
 
     DeepSeek models are OpenAI-compatible and provide high-quality translation.
 
-    Env vars:
-      - DEEPSEEK_API_KEY (required)
-      - DEEPSEEK_BASE_URL (optional, default: https://api.deepseek.com)
+    Config file:
+      - deepseek.api_key (required)
+      - deepseek.base_url (optional, default: https://api.deepseek.com)
     """
 
     name = "deepseek"
@@ -30,11 +30,17 @@ class DeepSeekBackend:
             raise ImportError("openai SDK not installed. Install with: pip install openai") from e
 
         self.model = model
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        if api_key is None:
+            cfg = get_backend_config("deepseek")
+            api_key = cfg.get("api_key") or get_backend_value("deepseek", "api_key", env_var="DEEPSEEK_API_KEY")
+            base_url = base_url or cfg.get("base_url")
+            if model == "deepseek-chat" and cfg.get("model"):
+                model = cfg.get("model")
+        self.api_key = api_key
         if not self.api_key:
-            raise ValueError("Missing DEEPSEEK_API_KEY")
+            raise ValueError("Missing DeepSeek API key (configure .scitrans_backends.json)")
 
-        self.base_url = base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        self.base_url = base_url or "https://api.deepseek.com"
         self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def translate(self, req: TranslateRequest) -> TranslateResult:

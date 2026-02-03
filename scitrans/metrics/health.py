@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
+
+import re
 
 from scitrans.core.models import Block, TranslatedBlock
 
@@ -68,20 +71,26 @@ def compute_block_health(
         details["errors"] = translated_block.errors
 
     # Numeric stability check
-    import re
-
     num_pattern = r"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"
-    source_nums = set(re.findall(num_pattern, translated_block.source_text))
-    translated_nums = set(re.findall(num_pattern, translated_block.translated_text))
+    source_nums = Counter(re.findall(num_pattern, translated_block.source_text))
+    translated_nums = Counter(re.findall(num_pattern, translated_block.translated_text))
 
     if source_nums:
-        preserved = len(source_nums & translated_nums)
-        num_ratio = preserved / len(source_nums)
+        preserved = sum(
+            min(count, translated_nums.get(num, 0)) for num, count in source_nums.items()
+        )
+        total = sum(source_nums.values())
+        num_ratio = preserved / total if total > 0 else 1.0
         if num_ratio < 0.9:  # Allow small variations
             reason_codes.append("numeric_drift")
             score = min(score, 0.7)
             details["numeric_preservation"] = num_ratio
-            details["missing_numbers"] = list(source_nums - translated_nums)
+            missing_numbers = []
+            for num, count in source_nums.items():
+                missing = count - translated_nums.get(num, 0)
+                if missing > 0:
+                    missing_numbers.extend([num] * missing)
+            details["missing_numbers"] = missing_numbers
 
     # Format preservation
     source_bullets = len(re.findall(r"^[\s]*[-•*]\s", translated_block.source_text, re.MULTILINE))
@@ -96,6 +105,15 @@ def compute_block_health(
             details["bullet_preservation"] = (
                 translated_bullets / source_bullets if source_bullets > 0 else 0.0
             )
+
+    # Placeholder remnants (should be fully restored before scoring)
+    placeholder_pattern = re.compile(r"@@SCITRANS_[A-Z_]+_\d{4}_[A-F0-9]{8}@@")
+    if placeholder_pattern.search(translated_block.translated_text):
+        reason_codes.append("placeholder_not_restored")
+        score = min(score, 0.4)
+        details["placeholder_remnants"] = placeholder_pattern.findall(
+            translated_block.translated_text
+        )
 
     # Overflow check (if bbox provided)
     if check_overflow and original_bbox:

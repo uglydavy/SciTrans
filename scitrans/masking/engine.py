@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
 from scitrans.core.models import Block
 # Import placeholder helpers for generation and validation
 from scitrans.masking.placeholders import generate_placeholder
+from scitrans.parsing.math_detection import mask_math_in_text
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,69 @@ ACADEMIC_TERMS = {
     "Main Contributions", "Future Directions", "Open Problems",
 }
 
+# Terms that should never be masked (always translated if possible).
+NEVER_MASK_TERMS = set(ACADEMIC_TERMS) | {
+    "Acknowledgement",
+    "Acknowledgements",
+    "Bibliography",
+    "Methods",
+    "Materials",
+    "Materials and Methods",
+    "Methods and Materials",
+}
+
+# Patterns that represent section headings/titles; never mask these.
+NEVER_MASK_PATTERNS = [
+    re.compile(
+        r"^\s*(\d+(?:\.\d+)*)?\s*"
+        r"(abstract|summary|introduction|background|overview|methods?|methodology|"
+        r"materials(?:\s+and\s+methods)?|results?|discussion|conclusion|references?|"
+        r"bibliography|appendix|acknowledg(e)?ments|preface|index|related work|"
+        r"future work|main contributions)\s*[:.\-]?\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(section|chapter|part)\s*\d+[:.\-]?\s*"
+        r"(abstract|summary|introduction|background|methods?|methodology|results?|"
+        r"discussion|conclusion|references?|appendix|acknowledg(e)?ments|"
+        r"related work|future work)\s*$",
+        re.IGNORECASE,
+    ),
+]
+
+# Only apply guardrails to these rules (math/code/urls should still be masked).
+GUARDRAIL_RULE_KINDS = {
+    "PERSON_NAME",
+    "PLACE_NAME",
+    "TOC_ENTRY",
+    "FIGURE_CAPTION",
+}
+
+HEADING_KEYWORDS = {
+    "abstract",
+    "summary",
+    "introduction",
+    "background",
+    "overview",
+    "method",
+    "methods",
+    "methodology",
+    "materials",
+    "materials and methods",
+    "results",
+    "discussion",
+    "conclusion",
+    "references",
+    "bibliography",
+    "appendix",
+    "acknowledgement",
+    "acknowledgements",
+    "preface",
+    "index",
+    "related work",
+    "future work",
+    "main contributions",
+}
 # Additional technical keywords that often appear in false positive matches
 TECHNICAL_KEYWORDS = {
     "Analysis", "Content", "Data", "System", "Method",
@@ -152,19 +216,65 @@ class MaskingEngine:
         rules: list[MaskRule] | None = None, 
         placeholder_fmt: str = DEFAULT_PLACEHOLDER_FMT,
         use_advanced_math: bool = True,
+        never_mask_terms: Iterable[str] | None = None,
+        never_mask_patterns: Iterable[re.Pattern | str] | None = None,
     ):
         self.rules = rules or default_rules()
         self.placeholder_fmt = placeholder_fmt
         self.use_advanced_math = use_advanced_math
-        if use_advanced_math:
-            try:
-                from scitrans.masking.advanced_math_detector import AdvancedMathDetector
-                self.advanced_math = AdvancedMathDetector()
-            except ImportError:
-                self.advanced_math = None
-                self.use_advanced_math = False
-        else:
-            self.advanced_math = None
+        self.never_mask_terms = {
+            self._normalize_text(term) for term in (never_mask_terms or NEVER_MASK_TERMS)
+        }
+        self.never_mask_patterns = self._compile_patterns(
+            never_mask_patterns or NEVER_MASK_PATTERNS
+        )
+        if not use_advanced_math:
+            self.use_advanced_math = False
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        return re.sub(r"\s+", " ", text.strip()).lower()
+
+    @staticmethod
+    def _compile_patterns(
+        patterns: Iterable[re.Pattern | str],
+    ) -> list[re.Pattern]:
+        compiled: list[re.Pattern] = []
+        for pattern in patterns:
+            if isinstance(pattern, re.Pattern):
+                compiled.append(pattern)
+            else:
+                compiled.append(re.compile(pattern, re.IGNORECASE))
+        return compiled
+
+    def should_skip_mask(self, text: str, block: Optional[Block] = None) -> bool:
+        """Return True when the text should never be masked."""
+        if not text:
+            return False
+        if block and (
+            block.meta.get("is_header")
+            or block.meta.get("block_type") in ("title", "header", "subheader")
+        ):
+            return True
+        normalized = self._normalize_text(text)
+        if normalized in self.never_mask_terms:
+            return True
+        for pattern in self.never_mask_patterns:
+            if pattern.search(text):
+                return True
+        # Catch numbered headings like "1. Introduction"
+        numbered = re.match(r"^\d+(?:\.\d+)*\s*[.:]?\s*(.+)$", normalized)
+        if numbered:
+            title = numbered.group(1).strip()
+            if title in self.never_mask_terms or title in HEADING_KEYWORDS:
+                return True
+        return False
+
+    def rule_allows_match(self, rule: MaskRule, text: str, block: Optional[Block]) -> bool:
+        """Apply stricter per-rule validation for masking."""
+        if rule.kind == "PERSON_NAME":
+            return self.is_likely_person_name(text, block)
+        return True
 
     def is_likely_person_name(self, text: str, block: Optional[Block] = None) -> bool:
         """Validate if text is likely a person name vs technical term.
@@ -183,6 +293,9 @@ class MaskingEngine:
         Returns:
             True if text is likely a person name, False otherwise
         """
+        if self.should_skip_mask(text, block):
+            return False
+
         # Exact match against academic terms (case-sensitive)
         if text in ACADEMIC_TERMS:
             return False
@@ -263,9 +376,11 @@ class MaskingEngine:
         # spans that are likely mathematical expressions even if they are not
         # delimited by $...$ or \(...\). The detector returns both the masked
         # text and a registry mapping its internal placeholders to original text.
-        if self.use_advanced_math and self.advanced_math and block:
-            math_masked, math_registry = self.advanced_math.mask_math_in_text(
-                masked, block, placeholder_fmt=self.placeholder_fmt
+        if self.use_advanced_math and block:
+            math_masked, math_registry = mask_math_in_text(
+                masked,
+                block,
+                placeholder_fmt=self.placeholder_fmt,
             )
             masked = math_masked
             registry.update(math_registry)
@@ -281,11 +396,15 @@ class MaskingEngine:
                 nonlocal n
                 matched_text = m.group(0)
                 
-                # Validate PERSON_NAME matches to avoid false positives
-                if rule.kind == "PERSON_NAME":
-                    if not self.is_likely_person_name(matched_text, block):
-                        rejected_masks.append((rule.kind, matched_text))
-                        return matched_text  # Don't mask - return original text
+                if rule.kind in GUARDRAIL_RULE_KINDS and self.should_skip_mask(
+                    matched_text, block
+                ):
+                    rejected_masks.append((rule.kind, matched_text))
+                    return matched_text
+
+                if not self.rule_allows_match(rule, matched_text, block):
+                    rejected_masks.append((rule.kind, matched_text))
+                    return matched_text
                 
                 n += 1
                 placeholder = generate_placeholder(rule.kind, n, matched_text)

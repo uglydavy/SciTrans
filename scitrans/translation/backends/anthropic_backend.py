@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import os
 import time
 
 from scitrans.translation.backends.base import TranslateRequest, TranslateResult
+from scitrans.translation.backends.config import get_backend_config, get_backend_value
 
 
 class AnthropicBackend:
@@ -29,15 +29,24 @@ class AnthropicBackend:
                 "anthropic SDK not installed. Install with: pip install anthropic"
             ) from e
 
+        cfg = get_backend_config("anthropic")
+        if model == "claude-3-5-sonnet-20241022" and cfg.get("model"):
+            model = cfg.get("model")
         self.model = model
         self.api_key = (
-            api_key or os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
+            api_key
+            or cfg.get("api_key")
+            or get_backend_value("anthropic", "api_key", env_var="ANTHROPIC_API_KEY")
+            or get_backend_value("anthropic", "auth_token", env_var="ANTHROPIC_AUTH_TOKEN")
         )
         if not self.api_key:
-            raise ValueError("Missing ANTHROPIC_API_KEY")
+            raise ValueError("Missing Anthropic API key (configure .scitrans_backends.json)")
 
         base_url = (
-            base_url or os.getenv("ANTHROPIC_BASE_URL") or os.getenv("ANTHROPIC_API_BASE_URL")
+            base_url
+            or cfg.get("base_url")
+            or get_backend_value("anthropic", "base_url", env_var="ANTHROPIC_BASE_URL")
+            or get_backend_value("anthropic", "api_base_url", env_var="ANTHROPIC_API_BASE_URL")
         )
         kwargs = {"api_key": self.api_key}
         if base_url:

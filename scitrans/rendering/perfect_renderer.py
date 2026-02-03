@@ -33,6 +33,7 @@ import fitz  # PyMuPDF
 
 from scitrans.core.models import Block, Document
 from scitrans.rendering.font_manager import FontManager
+from scitrans.parsing.layout import is_table_candidate
 from scitrans.rendering.math_safe_renderer import (
     RenderConfig,
     _fit_font_size,
@@ -312,7 +313,12 @@ def _should_replace_block(
     source_text = _block_text(block)
 
     # Preserve tables unless explicitly enabled, BUT always translate TOC, figures, captions
-    is_table_region = block.meta.get("region") == "table"
+    is_table_region = (
+        block.meta.get("region") == "table"
+        or block.meta.get("block_type") == "table"
+        or block.meta.get("is_table", False)
+        or is_table_candidate(block)
+    )
     is_toc = ("table of contents" in source_text.lower() or "contents" in source_text.lower()) and len(source_text) < 100
     is_figure_caption = any(keyword in source_text.lower() for keyword in ["figure", "fig.", "table", "tab."]) and len(source_text) < 200
     if is_table_region and not translate_tables and not (is_toc or is_figure_caption):
@@ -608,7 +614,7 @@ def render_translated_pdf_perfect(
             
             # Try to pick font with fallback handling
             try:
-                font = font_mgr.pick(font_key)
+                font = font_mgr.pick_for_text(target_text, font_key)
             except Exception as e:
                 logger.warning(f"Font {font_key} not available, using fallback: {e}")
                 # Fallback to standard font based on flags
@@ -618,7 +624,7 @@ def render_translated_pdf_perfect(
                     fallback_font = "Times-Italic" if "Times" in base_font else "Helvetica-Oblique"
                 else:
                     fallback_font = "Times-Roman"
-                font = font_mgr.pick(fallback_font)
+                font = font_mgr.pick_for_text(target_text, fallback_font)
             
             # Preserve text color if available
             text_color = preserve_color_from_spans(block)

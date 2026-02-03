@@ -35,20 +35,21 @@ def test_glossary_compliance_scoring():
         "machine learning": "apprentissage automatique",
         "neural network": "réseau de neurones",
     }
+    source = "machine learning and neural network"
 
     # Both terms present
     candidate1 = "L'apprentissage automatique et le réseau de neurones"
-    score1 = score_glossary_compliance(candidate1, glossary)
+    score1 = score_glossary_compliance(source, candidate1, glossary)
     assert score1 == 1.0
 
     # One term present
     candidate2 = "L'apprentissage automatique seulement"
-    score2 = score_glossary_compliance(candidate2, glossary)
+    score2 = score_glossary_compliance(source, candidate2, glossary)
     assert score2 == 0.5
 
     # No terms
     candidate3 = "Quelque chose d'autre"
-    score3 = score_glossary_compliance(candidate3, glossary)
+    score3 = score_glossary_compliance(source, candidate3, glossary)
     assert score3 == 0.0
 
 

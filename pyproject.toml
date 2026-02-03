@@ -92,6 +92,11 @@ ignore = ["E501", "UP045"]  # UP045: Use Optional[X] for Python 3.9 compatibilit
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
+filterwarnings = [
+    "ignore:.*SwigPyPacked.*:DeprecationWarning",
+    "ignore:.*SwigPyObject.*:DeprecationWarning",
+    "ignore:.*swigvarlink.*:DeprecationWarning",
+]
 
 [tool.mypy]
 python_version = "3.9"

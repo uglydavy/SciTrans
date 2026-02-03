@@ -20,6 +20,25 @@ def _norm(s: str) -> str:
     return " ".join((s or "").strip().split()).lower()
 
 
+def _is_short_identity_allowed(text: str) -> bool:
+    """Allow identity for short technical tokens/units/acronyms."""
+    raw = (text or "").strip()
+    if not raw or " " in raw:
+        return False
+    if len(raw) <= 4 and raw.isupper():
+        return True
+    if len(raw) <= 8 and re.fullmatch(r"[A-Z0-9][A-Z0-9\-/.]+", raw):
+        return True
+    if len(raw) <= 6 and re.fullmatch(r"[A-Za-z]{1,4}\d{1,3}[A-Za-z]{0,2}", raw):
+        return True
+    if re.fullmatch(r"[A-Za-z]{1,3}/[A-Za-z]{1,3}", raw):
+        return True
+    units = {"mm", "cm", "km", "kg", "mg", "g", "ml", "l", "s", "ms", "hz", "khz", "mhz", "ghz", "nm", "um", "db"}
+    if raw.lower() in units:
+        return True
+    return False
+
+
 def check_identity_translation(
     source_text: str,
     translated_text: str,
@@ -51,6 +70,21 @@ def check_identity_translation(
     tgt_n = _norm(tgt)
 
     if src_n and src_n == tgt_n:
+        academic_terms = {
+            "abstract", "summary", "introduction", "conclusion", "results",
+            "methodology", "discussion", "references", "appendix", "section",
+            "chapter", "subsection", "paragraph", "document", "report",
+            "background", "overview", "preface", "acknowledgments", "index",
+        }
+        if src_n in academic_terms:
+            return IdentityCheckResult(
+                is_identity=True,
+                confidence=1.0,
+                reason="Academic heading should be translated",
+                valid_identical_content=[tgt],
+                should_retry=True,
+            )
+
         # allow identity for pure punctuation/numerics
         if re.fullmatch(r"[\W\d\s]+", src or ""):
             return IdentityCheckResult(
@@ -76,13 +110,22 @@ def check_identity_translation(
         except ImportError:
             pass  # Fall through if content_detector not available
         
+        # Short technical tokens/units/acronyms are ok to keep identical
+        if _is_short_identity_allowed(src):
+            return IdentityCheckResult(
+                is_identity=False,
+                confidence=0.0,
+                reason="Short technical token/unit - identity allowed",
+                valid_identical_content=[tgt],
+                should_retry=False,
+            )
+
         # NEW: Check for proper nouns (capitalized words, likely names/places)
         src_words = [w for w in src.split() if w]
         tgt_words = [w for w in tgt.split() if w]
-        if len(src_words) <= 3 and len(tgt_words) <= 3:
-            # Short phrase - check if all words are capitalized (likely proper noun)
+        if 2 <= len(src_words) <= 3 and 2 <= len(tgt_words) <= 3:
+            # Multi-word proper nouns only (avoid single-word academic headings)
             if all(w and w[0].isupper() for w in src_words) and all(w and w[0].isupper() for w in tgt_words):
-                # Likely proper noun - allow identity
                 return IdentityCheckResult(
                     is_identity=False,
                     confidence=0.0,

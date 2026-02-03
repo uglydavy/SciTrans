@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import os
 import time
 
 from scitrans.translation.backends.base import TranslateRequest, TranslateResult
+from scitrans.translation.backends.config import get_backend_config, get_backend_value
 
 
 class OpenAIBackend:
@@ -29,18 +29,21 @@ class OpenAIBackend:
         except Exception as e:
             raise ImportError("openai SDK not installed. Install with: pip install openai") from e
 
+        cfg = get_backend_config("openai")
+        if model == "gpt-4o" and cfg.get("model"):
+            model = cfg.get("model")
         self.model = model
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or cfg.get("api_key") or get_backend_value("openai", "api_key", env_var="OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("Missing OPENAI_API_KEY")
+            raise ValueError("Missing OpenAI API key (configure .scitrans_backends.json)")
 
         kwargs = {"api_key": self.api_key}
 
-        base_url = base_url or os.getenv("OPENAI_BASE_URL")
+        base_url = base_url or cfg.get("base_url") or get_backend_value("openai", "base_url", env_var="OPENAI_BASE_URL")
         if base_url:
             kwargs["base_url"] = base_url
 
-        org_id = org_id or os.getenv("OPENAI_ORG_ID")
+        org_id = org_id or cfg.get("org_id") or get_backend_value("openai", "org_id", env_var="OPENAI_ORG_ID")
         if org_id:
             kwargs["organization"] = org_id
 

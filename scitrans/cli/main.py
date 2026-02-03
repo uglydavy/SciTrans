@@ -22,7 +22,7 @@ from scitrans.translation.backends.anthropic_backend import AnthropicBackend
 from scitrans.translation.backends.cascade_free import CascadeFreeBackend
 from scitrans.translation.backends.deepseek_backend import DeepSeekBackend
 from scitrans.translation.backends.dummy import DummyBackend
-from scitrans.translation.backends.google_backend import GoogleTranslateBackend
+from scitrans.translation.backends.google_backend import GoogleAIBackend, GoogleTranslateBackend
 from scitrans.translation.backends.huggingface_backend import HuggingFaceBackend
 from scitrans.translation.backends.ollama_backend import OllamaBackend
 from scitrans.translation.backends.openai_backend import OpenAIBackend
@@ -34,7 +34,7 @@ app = typer.Typer(
     help="""SciTrans-LLMs — Adaptive Scientific PDF Translation System
 
 A comprehensive PDF translation system with:
-  • Multiple backends (cascade_free, deepseek, anthropic, openai, google, ollama)
+  • Multiple backends (cascade_free, deepseek, anthropic, openai, google, google_ai, ollama)
   • Real-time quality scoring and automatic retry
   • Reranking for best translation candidates
   • Context window support for better quality
@@ -59,7 +59,7 @@ Commands:
 Translation Options:
   --in, --out          Input and output PDF paths
   --source, --target   Source and target languages (default: en → fr)
-  --backend            Backend: cascade_free (default), deepseek, anthropic, openai, google, ollama
+  --backend            Backend: cascade_free (default), deepseek, anthropic, openai, google, google_ai, ollama
   --n-candidates       Number of translation candidates (default: 3, higher = better quality)
   --context            Context window size (default: 2, higher = better consistency)
   --render-mode        perfect (exact fonts), enhanced (preserve styling), math-aware, math-safe
@@ -109,7 +109,7 @@ console = Console()
 
 def _get_backend(name: str, model: str):
     """Get backend instance with proper error handling for API keys."""
-    import os
+    from scitrans.translation.backends.config import get_backend_value
     name = name.lower().strip()
     
     try:
@@ -118,17 +118,23 @@ def _get_backend(name: str, model: str):
         if name == "dummy":
             return DummyBackend(model=model)
         if name == "deepseek":
-            if not os.getenv("DEEPSEEK_API_KEY"):
-                raise ValueError("DEEPSEEK_API_KEY not set. Set it in .env file or environment variables.")
+            if not get_backend_value("deepseek", "api_key", env_var="DEEPSEEK_API_KEY"):
+                raise ValueError("DeepSeek API key not set. Configure .scitrans_backends.json.")
             return DeepSeekBackend(model=model)
         if name == "anthropic":
-            if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("ANTHROPIC_AUTH_TOKEN"):
-                raise ValueError("ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN not set. Set it in .env file or environment variables.")
+            if not get_backend_value("anthropic", "api_key", env_var="ANTHROPIC_API_KEY") and not get_backend_value(
+                "anthropic", "auth_token", env_var="ANTHROPIC_AUTH_TOKEN"
+            ):
+                raise ValueError("Anthropic API key not set. Configure .scitrans_backends.json.")
             return AnthropicBackend(model=model)
         if name in ("openai", "gpt", "cascade"):
-            if not os.getenv("OPENAI_API_KEY"):
-                raise ValueError("OPENAI_API_KEY not set. Set it in .env file or environment variables.")
+            if not get_backend_value("openai", "api_key", env_var="OPENAI_API_KEY"):
+                raise ValueError("OpenAI API key not set. Configure .scitrans_backends.json.")
             return OpenAIBackend(model=model)
+        if name in ("google_ai", "gemini"):
+            if not get_backend_value("google_ai", "api_key"):
+                raise ValueError("Google AI API key not set. Configure .scitrans_backends.json.")
+            return GoogleAIBackend(model=model)
         if name in ("google", "google_free"):
             return GoogleTranslateBackend(model=model)
         if name in ("huggingface", "hf"):
@@ -136,7 +142,7 @@ def _get_backend(name: str, model: str):
         if name == "ollama":
             return OllamaBackend(model=model)
         raise typer.BadParameter(
-            f"Unknown backend: {name}. Available: cascade_free (default, uses ollama & google together), deepseek, anthropic, openai, google, huggingface, ollama, dummy"
+            f"Unknown backend: {name}. Available: cascade_free (default, uses ollama & google together), deepseek, anthropic, openai, google, google_ai, huggingface, ollama, dummy"
         )
     except ValueError as e:
         # Re-raise ValueError with clearer message
@@ -155,9 +161,7 @@ def gui(
     try:
         from scitrans.gui import launch_gui
     except ImportError as e:
-        console.print(
-            "[red]GUI not available. Install with: pip install -e '.[gui]' or pip install gradio[/red]"
-        )
+        console.print("[red]GUI not available. Install with: pip install -e '.[gui]' or pip install gradio[/red]")
         raise typer.Exit(1) from e
 
     console.print("[bold cyan]🚀 Launching SciTrans GUI...[/bold cyan]")
@@ -182,7 +186,7 @@ def translate(
         3, "--n-candidates", help="Number of translation candidates (default: 3 for quality)"
     ),
     context_window: int = typer.Option(
-        2, "--context", help="Number of previous blocks for context (default: 2)"
+        30, "--context", help="Number of previous blocks for context (default: 30)"
     ),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable translation caching"),
     no_rerank: bool = typer.Option(
@@ -192,20 +196,20 @@ def translate(
         False, "--no-retry", help="Disable automatic retry on failures (NOT RECOMMENDED)"
     ),
     render_mode: str = typer.Option(
-        "perfect",
+        "enhanced",
         "--render-mode",
-        help="Render mode: perfect (exact font sizes, bullets), enhanced (preserve styling), auto (detect math), math-aware (preserve equations), math-safe (legacy) [default: perfect]",
+        help="Render mode: perfect (exact font sizes, bullets), enhanced (preserve styling), auto (detect math), math-aware (preserve equations), math-safe (legacy) [default: enhanced]",
     ),
     translate_tables: bool = typer.Option(
-        False,
+        True,
         "--translate-tables/--preserve-tables",
         help="Translate tables instead of preserving them",
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (INFO level)"),
-    debug: bool = typer.Option(False, "--debug", help="Debug output (DEBUG level, detailed logs)"),
+    verbose: bool = typer.Option(True, "--verbose", "-v", help="Verbose output (INFO level)"),
+    debug: bool = typer.Option(True, "--debug", help="Debug output (DEBUG level, detailed logs)"),
     log_file: str = typer.Option(None, "--log-file", help="Write logs to file"),
     parallel: bool = typer.Option(
-        False, "--parallel", help="Enable parallel block translation (experimental)"
+        True, "--parallel", help="Enable parallel block translation (experimental)"
     ),
     max_workers: int = typer.Option(4, "--max-workers", help="Max parallel workers (default: 4)"),
 ):

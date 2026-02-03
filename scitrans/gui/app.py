@@ -38,13 +38,14 @@ except ImportError:
 
 from scitrans import __version__
 from scitrans.cli.main import _get_backend
+from scitrans.logging_config import setup_logging
 from scitrans.pipeline import PipelineConfig, run_pipeline
-from scitrans.utils.backend_checker import (
-    validate_backend_before_use,
-)
+from scitrans.translation.backends.config import DEFAULT_CONFIG_PATH, load_backend_config
+from scitrans.utils.backend_checker import validate_backend_before_use
 from scitrans.utils.env_loader import load_environment_variables
 
 logger = logging.getLogger(__name__)
+setup_logging(level="INFO")
 
 # Monkey-patch Gradio bug: TypeError in json_schema_to_python_type when schema is bool
 # This is a bug in Gradio 4.44.1's gradio_client/utils.py line 863
@@ -107,30 +108,17 @@ except Exception as e:
 # Language options
 LANGUAGES = [
     ("English", "en"),
-    ("French", "fr"),
-    ("Spanish", "es"),
-    ("German", "de"),
-    ("Chinese", "zh"),
-    ("Japanese", "ja"),
-    ("Korean", "ko"),
-    ("Portuguese", "pt"),
-    ("Italian", "it"),
-    ("Russian", "ru"),
-    ("Arabic", "ar"),
-    ("Dutch", "nl"),
+    ("French", "fr")
 ]
 
 # Backends with their models
 BACKEND_MODELS = {
     "cascade_free": ["cascade_free"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
-    "anthropic": [
-        "claude-3-5-sonnet-20241022",
-        "claude-3-opus-20240229",
-        "claude-3-haiku-20240307",
-    ],
+    "anthropic": ["claude-3-5-sonnet-20241022",  "claude-3-opus-20240229", "claude-3-haiku-20240307",],
     "openai": ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
     "google": ["google-translate"],
+    "google_ai": ["gemini-1.5-flash", "gemini-1.5-pro"],
     "ollama": ["llama3.2", "llama3.1", "mistral", "gemma2"],
     "dummy": ["dummy"],
 }
@@ -264,7 +252,7 @@ def translate_pdf(
         try:
             be = _get_backend(backend, model)
         except ValueError as e:
-            error_msg = f"Backend initialization failed: {e}\n\nPlease check:\n1. API keys are set in .env file or environment variables\n2. Required dependencies are installed\n3. Backend service is available"
+            error_msg = f"Backend initialization failed: {e}\n\nPlease check:\n1. API keys are set in {DEFAULT_CONFIG_PATH}\n2. Required dependencies are installed\n3. Backend service is available"
             log_system(error_msg, "ERROR")
             return None, None, None, None, None, error_msg, "", 0, 0
         except Exception as e:
@@ -281,13 +269,13 @@ def translate_pdf(
             target_lang=target,
             model=model,
             n_candidates=candidates,
-            context_window=context if context else 3,  # Use context window for better quality (default: 3)
+            context_window=context if context else 30,  # Use context window for better quality (default: 30)
             use_cache=False,
             parallel_translation=use_parallel,  # Disable for cascade_free (it parallelizes internally)
             max_workers=4 if use_parallel else 1,  # Only use workers if parallel is enabled
             enable_reranking=rerank,  # CRITICAL: Must be True for cascade_free to work well
             translate_tables=translate_tables,
-            render_mode="perfect",  # Use perfect renderer
+            render_mode="enhanced",  # Use enhanced renderer
         )
 
         # Warn user if using cascade_free without reranking
@@ -440,172 +428,172 @@ def format_quality_metrics(report: dict) -> str:
     
     metrics = f"""# 📊 Translation Quality Metrics
 
-## 🎯 Overall Assessment
-
-{get_score_emoji(doc_quality)} **Document Quality:** {doc_quality:.1%} ({get_status_text(doc_quality)})
-- *Weighted average of all quality dimensions*
-- *Higher is better - indicates overall translation quality*
-
-{get_score_emoji(confidence)} **Confidence:** {confidence:.1%} ({get_status_text(confidence)})
-- *System confidence in translation accuracy*
-- *Based on number of issues and warnings detected*
-
-{get_score_emoji(acceptance)} **Acceptance Rate:** {acceptance:.1%} ({get_status_text(acceptance)})
-- *Percentage of blocks that passed quality checks*
-- *Blocks with score ≥85% and no critical errors*
-
----
-
-## 📈 Quality Dimensions (Detailed Breakdown)
-
-### 🔢 Placeholder Preservation: {placeholder_score:.1%} {get_score_emoji(placeholder_score)}
-**Weight:** 30% (Most Critical)
-
-**What it measures:**
-- Preservation of LaTeX equations (e.g., `$x^2 + y^2$`)
-- Preservation of code blocks and URLs
-- Protection of special formatting markers
-
-**Why it matters:**
-- Mathematical formulas must remain unchanged
-- Code and URLs should not be translated
-- Critical for scientific/technical documents
-
-**Status:** {get_status_text(placeholder_score)}
-- {'✅ All placeholders preserved' if placeholder_score >= 1.0 else f'⚠️ {int((1-placeholder_score)*100)}% of placeholders may be missing'}
-
----
-
-### 🔢 Numeric Accuracy: {numeric_score:.1%} {get_score_emoji(numeric_score)}
-**Weight:** 20%
-
-**What it measures:**
-- Preservation of numbers (integers, decimals, percentages)
-- Consistency of numeric values between source and translation
-
-**Why it matters:**
-- Numbers should never change during translation
-- Critical for data, statistics, measurements
-- Errors here indicate serious translation problems
-
-**Status:** {get_status_text(numeric_score)}
-- {'✅ All numbers preserved' if numeric_score >= 0.95 else f'⚠️ Some numbers may have changed'}
-
----
-
-### 📝 Format Preservation: {format_score:.1%} {get_score_emoji(format_score)}
-**Weight:** 15%
-
-**What it measures:**
-- Preservation of bullet points and lists
-- Line breaks and paragraph structure
-- Text formatting consistency
-
-**Why it matters:**
-- Document structure should be maintained
-- Lists and bullets help readability
-- Format changes can confuse readers
-
-**Status:** {get_status_text(format_score)}
-- {'✅ Formatting preserved' if format_score >= 0.9 else '⚠️ Some formatting may be lost'}
-
----
-
-### 💬 Fluency: {fluency_score:.1%} {get_score_emoji(fluency_score)}
-**Weight:** 10%
-
-**What it measures:**
-- Naturalness of translated text
-- Absence of repetition and awkward phrasing
-- Appropriate length (not too short/long)
-
-**Why it matters:**
-- Translation should read naturally in target language
-- Poor fluency indicates low-quality translation
-- Affects readability and comprehension
-
-**Status:** {get_status_text(fluency_score)}
-- {'✅ Natural translation' if fluency_score >= 0.85 else '⚠️ May have fluency issues'}
-
----
-
-### 🎯 Fidelity: {fidelity_score:.1%} {get_score_emoji(fidelity_score)}
-**Weight:** 5%
-
-**What it measures:**
-- Meaning preservation (proxy: length ratio)
-- Semantic similarity between source and translation
-- Translation completeness
-
-**Why it matters:**
-- Translation should preserve original meaning
-- Too short/long may indicate missing/added content
-- Critical for accurate information transfer
-
-**Status:** {get_status_text(fidelity_score)}
-- {'✅ Meaning preserved' if fidelity_score >= 0.85 else '⚠️ Meaning may be altered'}
-
----
-
-## 📊 Block Statistics
-
-| Category | Count | Percentage |
-|----------|-------|------------|
-| **Total Blocks** | {scoring.get("blocks_total", 0)} | 100% |
-| **✅ Acceptable** | {scoring.get("blocks_acceptable", 0)} | {(scoring.get("blocks_acceptable", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
-| **⚠️ Need Review** | {scoring.get("blocks_need_review", 0)} | {(scoring.get("blocks_need_review", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
-| **🔄 Need Retry** | {scoring.get("blocks_need_retry", 0)} | {(scoring.get("blocks_need_retry", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
-
-**Acceptable Blocks:** Score ≥85%, no critical errors, ready for use  
-**Need Review:** Score 70-85% or has minor issues, should be checked  
-**Need Retry:** Score <70% or has critical errors, will be automatically retried
-
----
-
-## 🏥 Health Metrics
-
-{get_score_emoji(health.get("health_ratio", 0))} **Health Ratio:** {health.get("health_ratio", 0):.1%}
-- *Overall document health based on rendering and layout*
-
-| Status | Count |
-|--------|-------|
-| ✅ **OK Blocks** | {health.get("ok_blocks", 0)} |
-| ⚠️ **Warning Blocks** | {health.get("warning_blocks", 0)} |
-| ❌ **Failed Blocks** | {health.get("failed_blocks", 0)} |
-
-**OK Blocks:** Rendered correctly, no issues  
-**Warning Blocks:** Minor rendering issues (e.g., slight overflow)  
-**Failed Blocks:** Serious rendering problems (e.g., text overflow, missing content)
-
----
-
-## ⚠️ Issues & Warnings
-
-- **Total Issues:** {scoring.get("total_issues", 0)}
-  - *Critical problems that affect translation quality*
-- **Total Warnings:** {scoring.get("total_warnings", 0)}
-  - *Minor problems that may need attention*
-
----
-
-## 💡 Understanding Your Scores
-
-**Excellent (≥90%):** Translation is high quality, ready for use  
-**Good (75-90%):** Translation is acceptable, minor review recommended  
-**Fair (50-75%):** Translation has issues, review required  
-**Poor (<50%):** Translation has serious problems, retry recommended
-
-**Recommendations:**
-- If placeholder preservation <90%: Check for missing math/code
-- If numeric accuracy <90%: Verify all numbers are correct
-- If overall quality <75%: Consider retranslating with different settings
-- If many blocks need retry: Check backend configuration and API keys
-"""
+    ## 🎯 Overall Assessment
+    
+    {get_score_emoji(doc_quality)} **Document Quality:** {doc_quality:.1%} ({get_status_text(doc_quality)})
+    - *Weighted average of all quality dimensions*
+    - *Higher is better - indicates overall translation quality*
+    
+    {get_score_emoji(confidence)} **Confidence:** {confidence:.1%} ({get_status_text(confidence)})
+    - *System confidence in translation accuracy*
+    - *Based on number of issues and warnings detected*
+    
+    {get_score_emoji(acceptance)} **Acceptance Rate:** {acceptance:.1%} ({get_status_text(acceptance)})
+    - *Percentage of blocks that passed quality checks*
+    - *Blocks with score ≥85% and no critical errors*
+    
+    ---
+    
+    ## 📈 Quality Dimensions (Detailed Breakdown)
+    
+    ### 🔢 Placeholder Preservation: {placeholder_score:.1%} {get_score_emoji(placeholder_score)}
+    **Weight:** 30% (Most Critical)
+    
+    **What it measures:**
+    - Preservation of LaTeX equations (e.g., `$x^2 + y^2$`)
+    - Preservation of code blocks and URLs
+    - Protection of special formatting markers
+    
+    **Why it matters:**
+    - Mathematical formulas must remain unchanged
+    - Code and URLs should not be translated
+    - Critical for scientific/technical documents
+    
+    **Status:** {get_status_text(placeholder_score)}
+    - {'✅ All placeholders preserved' if placeholder_score >= 1.0 else f'⚠️ {int((1-placeholder_score)*100)}% of placeholders may be missing'}
+    
+    ---
+    
+    ### 🔢 Numeric Accuracy: {numeric_score:.1%} {get_score_emoji(numeric_score)}
+    **Weight:** 20%
+    
+    **What it measures:**
+    - Preservation of numbers (integers, decimals, percentages)
+    - Consistency of numeric values between source and translation
+    
+    **Why it matters:**
+    - Numbers should never change during translation
+    - Critical for data, statistics, measurements
+    - Errors here indicate serious translation problems
+    
+    **Status:** {get_status_text(numeric_score)}
+    - {'✅ All numbers preserved' if numeric_score >= 0.95 else f'⚠️ Some numbers may have changed'}
+    
+    ---
+    
+    ### 📝 Format Preservation: {format_score:.1%} {get_score_emoji(format_score)}
+    **Weight:** 15%
+    
+    **What it measures:**
+    - Preservation of bullet points and lists
+    - Line breaks and paragraph structure
+    - Text formatting consistency
+    
+    **Why it matters:**
+    - Document structure should be maintained
+    - Lists and bullets help readability
+    - Format changes can confuse readers
+    
+    **Status:** {get_status_text(format_score)}
+    - {'✅ Formatting preserved' if format_score >= 0.9 else '⚠️ Some formatting may be lost'}
+    
+    ---
+    
+    ### 💬 Fluency: {fluency_score:.1%} {get_score_emoji(fluency_score)}
+    **Weight:** 10%
+    
+    **What it measures:**
+    - Naturalness of translated text
+    - Absence of repetition and awkward phrasing
+    - Appropriate length (not too short/long)
+    
+    **Why it matters:**
+    - Translation should read naturally in target language
+    - Poor fluency indicates low-quality translation
+    - Affects readability and comprehension
+    
+    **Status:** {get_status_text(fluency_score)}
+    - {'✅ Natural translation' if fluency_score >= 0.85 else '⚠️ May have fluency issues'}
+    
+    ---
+    
+    ### 🎯 Fidelity: {fidelity_score:.1%} {get_score_emoji(fidelity_score)}
+    **Weight:** 5%
+    
+    **What it measures:**
+    - Meaning preservation (proxy: length ratio)
+    - Semantic similarity between source and translation
+    - Translation completeness
+    
+    **Why it matters:**
+    - Translation should preserve original meaning
+    - Too short/long may indicate missing/added content
+    - Critical for accurate information transfer
+    
+    **Status:** {get_status_text(fidelity_score)}
+    - {'✅ Meaning preserved' if fidelity_score >= 0.85 else '⚠️ Meaning may be altered'}
+    
+    ---
+    
+    ## 📊 Block Statistics
+    
+    | Category | Count | Percentage |
+    |----------|-------|------------|
+    | **Total Blocks** | {scoring.get("blocks_total", 0)} | 100% |
+    | **✅ Acceptable** | {scoring.get("blocks_acceptable", 0)} | {(scoring.get("blocks_acceptable", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
+    | **⚠️ Need Review** | {scoring.get("blocks_need_review", 0)} | {(scoring.get("blocks_need_review", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
+    | **🔄 Need Retry** | {scoring.get("blocks_need_retry", 0)} | {(scoring.get("blocks_need_retry", 0) / max(scoring.get("blocks_total", 1), 1) * 100):.1f}% |
+    
+    **Acceptable Blocks:** Score ≥85%, no critical errors, ready for use  
+    **Need Review:** Score 70-85% or has minor issues, should be checked  
+    **Need Retry:** Score <70% or has critical errors, will be automatically retried
+    
+    ---
+    
+    ## 🏥 Health Metrics
+    
+    {get_score_emoji(health.get("health_ratio", 0))} **Health Ratio:** {health.get("health_ratio", 0):.1%}
+    - *Overall document health based on rendering and layout*
+    
+    | Status | Count |
+    |--------|-------|
+    | ✅ **OK Blocks** | {health.get("ok_blocks", 0)} |
+    | ⚠️ **Warning Blocks** | {health.get("warning_blocks", 0)} |
+    | ❌ **Failed Blocks** | {health.get("failed_blocks", 0)} |
+    
+    **OK Blocks:** Rendered correctly, no issues  
+    **Warning Blocks:** Minor rendering issues (e.g., slight overflow)  
+    **Failed Blocks:** Serious rendering problems (e.g., text overflow, missing content)
+    
+    ---
+    
+    ## ⚠️ Issues & Warnings
+    
+    - **Total Issues:** {scoring.get("total_issues", 0)}
+      - *Critical problems that affect translation quality*
+    - **Total Warnings:** {scoring.get("total_warnings", 0)}
+      - *Minor problems that may need attention*
+    
+    ---
+    
+    ## 💡 Understanding Your Scores
+    
+    **Excellent (≥90%):** Translation is high quality, ready for use  
+    **Good (75-90%):** Translation is acceptable, minor review recommended  
+    **Fair (50-75%):** Translation has issues, review required  
+    **Poor (<50%):** Translation has serious problems, retry recommended
+    
+    **Recommendations:**
+    - If placeholder preservation <90%: Check for missing math/code
+    - If numeric accuracy <90%: Verify all numbers are correct
+    - If overall quality <75%: Consider retranslating with different settings
+    - If many blocks need retry: Check backend configuration and API keys
+    """
 
     # Convert markdown to HTML for scrollable display
     # Use simple regex-based conversion for reliability
     import re
-    
+
     html_metrics = metrics
     # Convert headers (preserve order - h3 before h2 before h1)
     html_metrics = re.sub(r'^### (.*?)$', r'<h3>\1</h3>', html_metrics, flags=re.MULTILINE)
@@ -787,34 +775,36 @@ def run_individual_test(test_name: str):
         # Format detailed output
         output = f"""# {test_info["name"]}
 
-## What This Test Does
-{test_info["description"]}
-
-## What It Tests
-"""
+    ## What This Test Does
+    {test_info["description"]}
+    
+    ## What It Tests
+    """
         for item in test_info["what_it_tests"]:
             output += f"- {item}\n"
 
         output += f"""
-## Why This Matters
-{test_info["useful_for"]}
+        
+    ## Why This Matters
+    {test_info["useful_for"]}
+    
+    ---
+    
+    ## Test Results
+    
+    **Exit Code:** {result.returncode} {"✅ PASSED" if result.returncode == 0 else "❌ FAILED"}
+    
+    ### Standard Output:
+    ```
+    {result.stdout}
+    ```
+    
+    ### Error Output:
+    ```
+    {result.stderr}
+    ```
+    """
 
----
-
-## Test Results
-
-**Exit Code:** {result.returncode} {"✅ PASSED" if result.returncode == 0 else "❌ FAILED"}
-
-### Standard Output:
-```
-{result.stdout}
-```
-
-### Error Output:
-```
-{result.stderr}
-```
-"""
         log_system(f"Test {test_name} completed with exit code {result.returncode}")
         return output
     except subprocess.TimeoutExpired:
@@ -899,7 +889,8 @@ def add_glossary_term(source: str, target: str) -> tuple[str, str]:
 
 def get_backend_status_table() -> str:
     """Get comprehensive backend status table."""
-    backends = ["deepseek", "anthropic", "openai", "google", "ollama", "cascade_free", "dummy"]
+    backends = ["deepseek", "anthropic", "openai", "google", "google_ai", "ollama", "cascade_free", "dummy"]
+    cfg = load_backend_config()
 
     table = "| Backend | Status | API Key | Dependencies |\n|---------|--------|---------|--------------|\n"
     for backend in backends:
@@ -913,8 +904,13 @@ def get_backend_status_table() -> str:
             deps_status = "OK"
             overall_status = "✅ Available"
         else:
-            key_name = f"{backend.upper()}_API_KEY"
-            api_status = "✅ Set" if os.getenv(key_name) else "❌ Not Set"
+            api_key = None
+            if backend == "google":
+                api_status = "N/A (free)"
+            else:
+                if isinstance(cfg, dict):
+                    api_key = cfg.get(backend, {}).get("api_key")
+                api_status = "✅ Set" if api_key else "❌ Not Set"
 
             # Check dependencies
             try:
@@ -939,30 +935,18 @@ def get_backend_status_table() -> str:
 
 
 def save_api_key(backend: str, key: str) -> str:
-    """Save API key to setup_env.sh."""
+    """Save API key to .scitrans_backends.json."""
     if not key:
         return "API key required"
 
     try:
-        env_file = Path("setup_env.sh")
-        content = env_file.read_text() if env_file.exists() else "#!/bin/bash\n"
-        key_name = f"{backend.upper()}_API_KEY"
-        key_line = f'export {key_name}="{key}"\n'
-
-        if key_name in content:
-            lines = content.split("\n")
-            for i, line in enumerate(lines):
-                if line.startswith(f"export {key_name}="):
-                    lines[i] = key_line.strip()
-            content = "\n".join(lines)
-        else:
-            content += key_line
-
-        env_file.write_text(content)
-        os.environ[key_name] = key
-
+        cfg = load_backend_config()
+        if backend not in cfg:
+            cfg[backend] = {}
+        cfg[backend]["api_key"] = key
+        Path(DEFAULT_CONFIG_PATH).write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
         log_system(f"Saved API key for {backend}")
-        return f"Saved {backend} API key. Restart GUI to apply."
+        return f"Saved {backend} API key to {DEFAULT_CONFIG_PATH}. Restart GUI to apply."
     except Exception as e:
         error_msg = f"Error saving key: {e}"
         log_system(error_msg, "ERROR")
@@ -1035,25 +1019,25 @@ def get_translation_status() -> str:
     status = translation_status
     return f"""# Translation Status
 
-**Input:** {status.get("input", "N/A")}
-**Output:** {status.get("output", "N/A")}
-**Backend:** {status.get("backend", "N/A")}
-**Model:** {status.get("model", "N/A")}
-
-## Statistics
-- **Blocks:** {status.get("blocks", 0)} total
-- **OK Blocks:** {status.get("ok_blocks", 0)}
-- **Failed Blocks:** {status.get("failed_blocks", 0)}
-
-## Quality
-- **Quality Score:** {status.get("quality", 0):.1%}
-- **Confidence:** {status.get("confidence", 0):.1%}
-- **Acceptance Rate:** {status.get("acceptance_rate", 0):.1%}
-- **Health Ratio:** {status.get("health", 0):.1%}
-
-## Performance
-- **Time:** {status.get("time", 0):.1f}s
-"""
+    **Input:** {status.get("input", "N/A")}
+    **Output:** {status.get("output", "N/A")}
+    **Backend:** {status.get("backend", "N/A")}
+    **Model:** {status.get("model", "N/A")}
+    
+    ## Statistics
+    - **Blocks:** {status.get("blocks", 0)} total
+    - **OK Blocks:** {status.get("ok_blocks", 0)}
+    - **Failed Blocks:** {status.get("failed_blocks", 0)}
+    
+    ## Quality
+    - **Quality Score:** {status.get("quality", 0):.1%}
+    - **Confidence:** {status.get("confidence", 0):.1%}
+    - **Acceptance Rate:** {status.get("acceptance_rate", 0):.1%}
+    - **Health Ratio:** {status.get("health", 0):.1%}
+    
+    ## Performance
+    - **Time:** {status.get("time", 0):.1f}s
+    """
 
 
 def create_gui():
@@ -1169,14 +1153,14 @@ def create_gui():
                             )
                             context = gr.Slider(
                                 0,
-                                10,
+                                50,
                                 value=0,
                                 step=1,
                                 label="Context Window",
                                 info="Previous blocks to include",
                             )
                             cache = gr.Checkbox(
-                                value=True,
+                                value=False,
                                 label="Use Cache",
                                 info="Cache translations for faster re-runs",
                             )
@@ -1186,7 +1170,7 @@ def create_gui():
                                 info="Rerank multiple candidates",
                             )
                             translate_tables = gr.Checkbox(
-                                value=False,
+                                value=True,
                                 label="Translate Tables",
                                 info="Translate table content",
                             )
@@ -1374,20 +1358,20 @@ def create_gui():
 
                         with gr.Accordion("📖 How to Use Ablation Studies", open=False):
                             gr.Markdown("""
-Ablation studies help you understand the impact of different features on translation quality.
-
-1. **Select Backend & Languages**: Choose your translation backend and language pair
-2. **Select Features**: Check which features to test (leave unchecked to disable)
-3. **Upload PDF or Enter URL**: Provide the document to analyze
-4. **Run Study**: Click "Run Ablation Study" to compare different configurations
-5. **Analyze Results**: Compare quality metrics across different feature combinations
-
-**Features:**
-- **Masking**: Always enabled (protects math, URLs, code from translation)
-- **Reranking**: Selects best translation from multiple candidates
-- **Context Window**: Includes previous blocks for consistency
-- **Quality Scoring**: Evaluates translation quality
-- **Glossary**: Uses domain-specific terminology
+                            Ablation studies help you understand the impact of different features on translation quality.
+                            
+                            1. **Select Backend & Languages**: Choose your translation backend and language pair
+                            2. **Select Features**: Check which features to test (leave unchecked to disable)
+                            3. **Upload PDF or Enter URL**: Provide the document to analyze
+                            4. **Run Study**: Click "Run Ablation Study" to compare different configurations
+                            5. **Analyze Results**: Compare quality metrics across different feature combinations
+                            
+                            **Features:**
+                            - **Masking**: Always enabled (protects math, URLs, code from translation)
+                            - **Reranking**: Selects best translation from multiple candidates
+                            - **Context Window**: Includes previous blocks for consistency
+                            - **Quality Scoring**: Evaluates translation quality
+                            - **Glossary**: Uses domain-specific terminology
                             """)
 
                     with gr.Column(scale=1):
@@ -1572,17 +1556,17 @@ Ablation studies help you understand the impact of different features on transla
                                 # Format results
                                 results = f"""# Ablation Study Results
 
-## Configuration
-- **Backend:** {backend_choice}
-- **Languages:** {source_lang} → {target_lang}
-- **Features Tested:** {", ".join(features) if features else "None"}
-- **Total Runs:** {len(feature_combinations)}
-
-## Results Comparison
-
-| Configuration | Quality | Confidence | Acceptance | OK Blocks | Time (s) | Health |
-|---------------|---------|------------|------------|-----------|----------|--------|
-"""
+                                ## Configuration
+                                - **Backend:** {backend_choice}
+                                - **Languages:** {source_lang} → {target_lang}
+                                - **Features Tested:** {", ".join(features) if features else "None"}
+                                - **Total Runs:** {len(feature_combinations)}
+                                
+                                ## Results Comparison
+                                
+                                | Configuration | Quality | Confidence | Acceptance | OK Blocks | Time (s) | Health |
+                                |---------------|---------|------------|------------|-----------|----------|--------|
+                                """
 
                                 for data in results_data:
                                     results += f"| {data['name']} | {data['quality']:.1%} | {data['confidence']:.1%} | {data['acceptance_rate']:.1%} | {data['blocks_ok']}/{data['blocks_total']} | {data['time']:.1f} | {data['health']:.1%} |\n"
@@ -1922,29 +1906,29 @@ Ablation studies help you understand the impact of different features on transla
             # ========== ABOUT TAB ==========
             with gr.Tab("About"):
                 gr.Markdown(f"""
-# SciTrans System Information
-
-**Version:** {__version__}
-**Author:** Franck Davy
-**Institution:** Wenzhou University, 2025
-
-## Features
-
-- **Perfect Rendering**: Exact font size preservation, bullet points, styling
-- **Math-Safe Translation**: Equations and formulas protected
-- **Layout Preservation**: Maintains document structure
-- **Multi-Backend Support**: DeepSeek, Anthropic, OpenAI, Google, Ollama
-- **Quality Scoring**: Comprehensive translation quality metrics
-- **Domain Glossaries**: Specialized terminology support
-- **Ablation Studies**: Feature impact analysis
-
-## Documentation
-
-See README.md and docs/ folder for complete documentation.
-
-## Contact
-
-Email: aknk.v@pm.me
+            # SciTrans System Information
+            
+            **Version:** {__version__}
+            **Author:** Franck Davy
+            **Institution:** Wenzhou University, 2025
+            
+            ## Features
+            
+            - **Perfect Rendering**: Exact font size preservation, bullet points, styling
+            - **Math-Safe Translation**: Equations and formulas protected
+            - **Layout Preservation**: Maintains document structure
+            - **Multi-Backend Support**: DeepSeek, Anthropic, OpenAI, Google, Ollama
+            - **Quality Scoring**: Comprehensive translation quality metrics
+            - **Domain Glossaries**: Specialized terminology support
+            - **Ablation Studies**: Feature impact analysis
+            
+            ## Documentation
+            
+            See README.md and docs/ folder for complete documentation.
+            
+            ## Contact
+            
+            Email: aknk.v@pm.me
                 """)
 
         # Wire up translation
@@ -2068,49 +2052,6 @@ Email: aknk.v@pm.me
                 output_page_info,
             ],
         )
-
-        # PDF pagination handlers with error handling
-        def update_source_preview(page_num):
-            """Update source PDF preview for different page."""
-            global current_source_pdf, source_pdf_total_pages
-            try:
-                if not current_source_pdf:
-                    return None, "No PDF loaded"
-                if not Path(current_source_pdf).exists():
-                    return None, "Source PDF file not found (may have been deleted)"
-                page_num = int(page_num)
-                if page_num < 0:
-                    page_num = 0
-                if page_num >= source_pdf_total_pages:
-                    page_num = source_pdf_total_pages - 1
-                preview, total = pdf_to_images(current_source_pdf, page_num)
-                if preview is None:
-                    return None, f"Failed to generate preview for page {page_num + 1}"
-                return preview, f"Page {page_num + 1} of {total}"
-            except Exception as e:
-                log_system(f"Error updating source preview: {e}", "ERROR")
-                return None, f"Error: {str(e)}"
-
-        def update_output_preview(page_num):
-            """Update output PDF preview for different page."""
-            global current_output_pdf, output_pdf_total_pages
-            try:
-                if not current_output_pdf:
-                    return None, "No PDF loaded"
-                if not Path(current_output_pdf).exists():
-                    return None, "Output PDF file not found (may have been deleted)"
-                page_num = int(page_num)
-                if page_num < 0:
-                    page_num = 0
-                if page_num >= output_pdf_total_pages:
-                    page_num = output_pdf_total_pages - 1
-                preview, total = pdf_to_images(current_output_pdf, page_num)
-                if preview is None:
-                    return None, f"Failed to generate preview for page {page_num + 1}"
-                return preview, f"Page {page_num + 1} of {total}"
-            except Exception as e:
-                log_system(f"Error updating output preview: {e}", "ERROR")
-                return None, f"Error: {str(e)}"
 
         # PDF upload handler - initialize preview
         def on_pdf_upload(pdf_file):

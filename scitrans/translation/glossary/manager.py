@@ -11,6 +11,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,10 @@ class GlossaryManager:
         term = GlossaryTerm(source=source, target=target, domain=domain)
         self.terms[source.lower()] = term
 
+    def add_custom_terms(self, terms: dict[str, str], domain: str = "custom") -> int:
+        """Add a batch of custom terms."""
+        return self.load_from_dict(terms, domain=domain)
+
     def get_term(self, source: str) -> GlossaryTerm | None:
         """Get a term by source text (case-insensitive)."""
         return self.terms.get(source.lower())
@@ -187,13 +192,17 @@ class GlossaryManager:
             List of terms found in text
         """
         found = []
-        text_lower = text.lower()
-
         for term in self.terms.values():
-            if term.source.lower() in text_lower:
+            pattern = self._term_pattern(term.source, case_sensitive=term.case_sensitive)
+            if re.search(pattern, text):
                 found.append(term)
-
         return found
+
+    def get_relevant_terms(self, text: str, max_terms: int = 20) -> list[GlossaryTerm]:
+        """Return relevant terms for prompt injection."""
+        terms = self.find_terms_in_text(text)
+        terms.sort(key=lambda t: len(t.source), reverse=True)
+        return terms[:max_terms]
 
     def generate_prompt_section(self, source_text: str, max_terms: int = 20) -> str:
         """
@@ -207,7 +216,7 @@ class GlossaryManager:
             Formatted glossary section for prompt
         """
         # Find relevant terms in source text
-        relevant_terms = self.find_terms_in_text(source_text)
+        relevant_terms = self.get_relevant_terms(source_text, max_terms=max_terms)
 
         if not relevant_terms:
             return ""
@@ -221,6 +230,57 @@ class GlossaryManager:
             lines.append(f'  • "{term.source}" → "{term.target}"')
 
         return "\n".join(lines)
+
+    def enforce_translation(self, source_text: str, translated_text: str) -> tuple[str, GlossaryStats]:
+        """
+        Enforce glossary terms by replacing unchanged source terms when possible.
+
+        Only replaces when the source term appears in translated_text and the target
+        term is missing, minimizing over-aggressive edits.
+        """
+        stats = GlossaryStats()
+        source_terms = self.find_terms_in_text(source_text)
+        stats.total_terms = len(self.terms)
+        stats.terms_found = len(source_terms)
+        updated = translated_text
+        if not source_terms:
+            stats.adherence_rate = 1.0
+            return updated, stats
+
+        for term in source_terms:
+            expected = term.target
+            if expected.lower() in updated.lower():
+                stats.terms_enforced += 1
+                continue
+
+            pattern = self._term_pattern(term.source, case_sensitive=term.case_sensitive)
+            if re.search(pattern, updated):
+                updated = re.sub(
+                    pattern,
+                    self._apply_case(expected, term.source),
+                    updated,
+                )
+                stats.terms_enforced += 1
+            else:
+                stats.terms_violated += 1
+
+        stats.calculate_adherence()
+        return updated, stats
+
+    @staticmethod
+    def _term_pattern(term: str, *, case_sensitive: bool = False) -> re.Pattern:
+        escaped = re.escape(term)
+        pattern = rf"\b{escaped}\b"
+        flags = 0 if case_sensitive else re.IGNORECASE
+        return re.compile(pattern, flags=flags)
+
+    @staticmethod
+    def _apply_case(text: str, source: str) -> str:
+        if source.isupper():
+            return text.upper()
+        if source.istitle():
+            return text.title()
+        return text
 
     def validate_translation(self, source_text: str, translated_text: str) -> GlossaryStats:
         """

@@ -117,7 +117,7 @@ def _render_table_block(
             base_size = (
                 block.lines[0].spans[0].style.size if block.lines and block.lines[0].spans else 11.0
             )
-            fontname, fontfile = font_mgr.get_font(base_font)
+            fontname, fontfile = font_mgr.get_font_for_text(cell_text, base_font)
             align = _infer_alignment(
                 page.rect.width, cell_rect.x0, cell_rect.x1, cfg.align_threshold
             )
@@ -245,7 +245,7 @@ def render_translated_pdf_math_aware(
                         if block.lines and block.lines[0].spans
                         else 11.0
                     )
-                    fontname, fontfile = font_mgr.get_font(base_font)
+                    fontname, fontfile = font_mgr.get_font_for_text(target_text, base_font)
                     align = _infer_alignment(
                         page.rect.width, block.bbox.x0, block.bbox.x1, cfg.align_threshold
                     )
@@ -308,7 +308,7 @@ def render_translated_pdf_math_aware(
                         base_size = span.style.size
                         break
 
-            font = font_mgr.pick(base_font)
+            font = font_mgr.pick_for_text(target_text, base_font)
             rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
             align = _infer_alignment(
                 page_model.width, block.bbox.x0, block.bbox.x1, cfg.align_threshold

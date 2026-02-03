@@ -1,13 +1,19 @@
-# exclude generated / large artifacts from git archive
+# Exclude generated / heavy outputs from git archive
 experiments/results/ export-ignore
-test_outputs/        export-ignore
-SciTrans-src.zip     export-ignore
-callgraph.dot        export-ignore
-scitrans/utils/*.bak export-ignore
+outputs/             export-ignore
+test_outputs/         export-ignore
+previews/             export-ignore
 
-# optional: exclude large test PDFs (keep only if you want them in the archive)
-test_pdfs/           export-ignore
+# Python junk
+__pycache__/          export-ignore
+*.pyc                 export-ignore
+.venv/                export-ignore
+venv/                 export-ignore
 
-# caches
-__pycache__/         export-ignore
-*.pyc                export-ignore
+# Build junk
+build/                export-ignore
+dist/                 export-ignore
+*.egg-info/           export-ignore
+
+test_pdfs/            export-ignore
+data/                 export-ignore

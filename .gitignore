@@ -62,6 +62,7 @@ quality_report_before_fixes.json
 
 # OS
 .DS_Store
+.scitrans_backends.json
 Thumbs.db
 
 # Temporary

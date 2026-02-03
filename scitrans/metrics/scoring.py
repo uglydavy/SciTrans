@@ -241,6 +241,7 @@ def compute_post_translation_score(
     # After restoration, placeholders should NOT be in translated_text (they've been replaced)
     # So successful restoration = placeholders NOT present in final text
     placeholder_score = 1.0
+    placeholder_pattern = re.compile(r"@@SCITRANS_[A-Z_]+_\d{4}_[A-F0-9]{8}@@")
     if registry:
         # Check for restoration errors first (most reliable indicator of failure)
         has_restoration_error = any(
@@ -276,6 +277,15 @@ def compute_post_translation_score(
         else:
             # No placeholders present and no errors = restoration succeeded (perfect!)
             placeholder_score = 1.0
+    # Detect placeholder hallucinations or remnants not tracked by registry
+    hallucinated = [
+        ph for ph in placeholder_pattern.findall(translated_text) if ph not in registry
+    ]
+    if hallucinated:
+        issues.append("placeholder_hallucinated")
+        placeholder_score = min(placeholder_score, 0.5)
+        warnings.append(f"placeholder_hallucinated_count:{len(hallucinated)}")
+
     # If registry is empty, no placeholders to preserve, so score is 1.0 (already set)
 
     # 2. Numeric accuracy

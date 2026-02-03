@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import time
 
+from scitrans.translation.backends.config import get_backend_config, get_backend_value
+
 from scitrans.translation.backends.base import TranslateRequest, TranslateResult
 
 logger = logging.getLogger(__name__)
@@ -132,4 +134,70 @@ class GoogleTranslateBackend:
                 "error": str(last_error)[:200] if last_error and not translated else None,
                 "attempts": max_retries if not translated else attempt + 1,
             },
+        )
+
+
+class GoogleAIBackend:
+    """Google AI (Gemini) backend.
+
+    Config file:
+      - google_ai.api_key (required)
+      - google_ai.base_url (optional)
+      - google_ai.model (optional)
+    """
+
+    name = "google_ai"
+
+    def __init__(
+        self,
+        model: str = "gemini-1.5-flash",
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ):
+        cfg = get_backend_config("google_ai")
+        self.api_key = api_key or cfg.get("api_key") or get_backend_value("google_ai", "api_key")
+        if not self.api_key:
+            raise ValueError("Missing Google AI API key (configure .scitrans_backends.json)")
+        self.base_url = base_url or cfg.get("base_url") or "https://generativelanguage.googleapis.com/v1beta"
+        if model == "gemini-1.5-flash" and cfg.get("model"):
+            model = cfg.get("model")
+        self.model = model
+
+    def translate(self, req: TranslateRequest) -> TranslateResult:
+        start = time.time()
+        try:
+            import requests  # type: ignore
+        except Exception as e:
+            raise ImportError("requests not installed. Install with: pip install requests") from e
+
+        url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        payload = {
+            "system_instruction": {"parts": [{"text": req.system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": req.text}]}],
+            "generationConfig": {
+                "temperature": req.temperature,
+                "candidateCount": req.n_candidates,
+            },
+        }
+        candidates: list[str] = []
+        error = None
+        try:
+            response = requests.post(url, json=payload, timeout=req.timeout)
+            response.raise_for_status()
+            data = response.json()
+            for cand in data.get("candidates", []):
+                content = cand.get("content", {})
+                parts = content.get("parts", [])
+                text = "".join(p.get("text", "") for p in parts if p.get("text"))
+                if text.strip():
+                    candidates.append(text.strip())
+        except Exception as e:
+            error = str(e)
+
+        latency = time.time() - start
+        return TranslateResult(
+            candidates=candidates if candidates else [""],
+            model=self.model,
+            backend=self.name,
+            meta={"latency_s": latency, "error": error},
         )

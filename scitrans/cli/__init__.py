@@ -11,4 +11,3 @@ def __getattr__(name: str):
         from scitrans.cli.main import app
         return app
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-

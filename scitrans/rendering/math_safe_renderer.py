@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import fitz  # PyMuPDF
 
 from scitrans.core.models import Document
-from scitrans.rendering.font_manager import FontManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +24,8 @@ class RenderConfig:
     - Minimal margins to maximize space while preventing overlaps
     """
 
-    # Minimum font size. Set to 10.0pt for readability (NEVER go below this)
-    # Increased from 7.0pt to ensure text is readable
-    min_font_size: float = 10.0
+    # Minimum font size. Use a smaller floor to avoid truncation in tight boxes.
+    min_font_size: float = 6.0
     # Allow shrinking to 80% of original (more aggressive to fit text, but still readable)
     max_shrink_ratio: float = 0.80
     # Standard line height for readability
@@ -236,89 +234,18 @@ def render_translated_pdf(
     cfg: RenderConfig | None = None,
     assets_dir: str | None = None,
 ) -> None:
-    """Render translated blocks onto the original PDF.
+    """Legacy entrypoint retained for compatibility.
 
-    IMPORTANT behavior:
-    - Redacts the original block rectangles before inserting translation.
-    - Inserts translated text with font fitting to avoid overflow.
-    - Never creates new pages.
+    Delegates to the primary renderer for best font/style fidelity.
     """
-    cfg = cfg or RenderConfig()
-    font_mgr = FontManager(assets_dir=assets_dir)
-    pdf = fitz.open(source_pdf)
+    from scitrans.rendering.perfect_renderer import render_translated_pdf_perfect
 
-    if len(pdf) != len(doc.pages):
-        raise ValueError("Parsed document pages != PDF pages")
-
-    for page_idx, page_model in enumerate(doc.pages):
-        page = pdf[page_idx]
-
-        # 1) Add redactions for all text blocks first
-        for block in page_model.blocks:
-            if block.type != "text":
-                continue
-            rect = fitz.Rect(
-                block.bbox.x0 - cfg.redact_padding,
-                block.bbox.y0 - cfg.redact_padding,
-                block.bbox.x1 + cfg.redact_padding,
-                block.bbox.y1 + cfg.redact_padding,
-            )
-            page.add_redact_annot(rect, fill=(1, 1, 1))
-
-        # Apply redactions once per page (fast + avoids redacting newly inserted text)
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
-
-        # 2) Insert translations
-        for block in page_model.blocks:
-            if block.type != "text":
-                continue
-
-            # Source text (debug)
-            source_text = "".join(sp.text for ln in block.lines for sp in ln.spans)
-
-            target_text = translations.get(block.id, "")
-            if not target_text:
-                # Deterministic fallback: if missing, use source text (but pipeline should avoid)
-                target_text = source_text
-
-            # Baseline style from the first span
-            base_font = "Times-Roman"
-            base_size = 11.0
-            if block.lines and block.lines[0].spans:
-                st = block.lines[0].spans[0].style
-                base_font = st.font
-                base_size = st.size
-
-            font = font_mgr.pick(base_font)
-            rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
-            align = _infer_alignment(
-                page_model.width, block.bbox.x0, block.bbox.x1, cfg.align_threshold
-            )
-
-            fitted_size = _fit_font_size(
-                page,
-                rect,
-                target_text,
-                fontname=font.name,
-                fontfile=font.file,
-                base_size=base_size,
-                cfg=cfg,
-                align=align,
-            )
-
-            _try_insert_textbox(
-                page,
-                rect,
-                target_text,
-                fontname=font.name,
-                fontfile=font.file,
-                fontsize=fitted_size,
-                align=align,
-                line_height=cfg.line_height,
-            )
-
-            if cfg.debug_draw_boxes:
-                page.draw_rect(rect, color=(1, 0, 0), width=0.5)
-
-    pdf.save(output_pdf)
-    pdf.close()
+    render_translated_pdf_perfect(
+        source_pdf=source_pdf,
+        doc=doc,
+        translations=translations,
+        output_pdf=output_pdf,
+        cfg=cfg,
+        assets_dir=assets_dir,
+        translate_tables=False,
+    )

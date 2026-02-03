@@ -1,188 +1,93 @@
 from __future__ import annotations
 
+from typing import Iterable
 
-def build_system_prompt(*, source: str, target: str, glossary: dict[str, str] | None = None, is_header: bool = False, is_bullet: bool = False) -> str:
-    """Build system prompt with enhanced instructions for headers/titles/bullets.
-    
-    Args:
-        source: Source language code
-        target: Target language code
-        glossary: Optional glossary dict
-        is_header: True if this is a header/title block
-        is_bullet: True if this is a bullet point
-    """
-    lines = [
-        "You are a professional translator specializing in scientific and technical documents.",
-        f"Your task: Translate text from {source.upper()} to {target.upper()}.",
+PROMPT_VERSION = "v3.1"
+
+
+def _select_glossary_terms(
+    glossary: dict[str, str] | None,
+    source_text: str | None,
+    max_terms: int = 25,
+) -> list[tuple[str, str]]:
+    if not glossary:
+        return []
+    if not source_text:
+        return list(glossary.items())[:max_terms]
+    source_lower = source_text.lower()
+    selected = []
+    for k, v in glossary.items():
+        if k.lower() in source_lower:
+            selected.append((k, v))
+    # Prefer longer terms first
+    selected.sort(key=lambda kv: len(kv[0]), reverse=True)
+    return selected[:max_terms]
+
+
+def build_system_prompt(
+    *,
+    source: str,
+    target: str,
+    glossary: dict[str, str] | None = None,
+    source_text: str | None = None,
+    is_header: bool = False,
+    is_bullet: bool = False,
+    is_table: bool = False,
+) -> str:
+    """Build a concise, strict system prompt for translation."""
+    lines: list[str] = [
+        "You are a professional translator for scientific and technical documents.",
+        f"Translate from {source.upper()} to {target.upper()}.",
+        "Output ONLY the translated text. No labels, no explanations.",
         "",
-        "CRITICAL INSTRUCTIONS:",
-        f"1. You MUST translate the text from {source.upper()} to {target.upper()}.",
-        "2. You MUST NOT return the source text unchanged - always translate it.",
-        "3. You MUST NOT return generic responses, greetings, or explanations - ONLY the translated text.",
-        "4. Output ONLY the translated text (no labels, no explanations, no source text, no greetings).",
+        "Core rules:",
+        "- Translate all visible text (including headers, captions, and TOC entries).",
+        "- Preserve numbers, units, citations, and punctuation.",
+        "- Keep formatting: line breaks, bullets, and numbering structure.",
+        "- Do not add or remove content; no greetings or commentary.",
         "",
-        "🚨 HALLUCINATION PREVENTION - CRITICAL 🚨",
-        "5. OUTPUT LENGTH CONSTRAINT:",
-        "   - Your translation should be similar length to source text (±30%)",
-        "   - If source is 50 characters, translation should be 35-65 characters",
-        "   - If your translation is MUCH longer than source, you are HALLUCINATING",
-        "   - FORBIDDEN: Do NOT add explanations, instructions, or extra content",
-        "   - FORBIDDEN: Do NOT generate example text, error codes, or forms",
-        "   - Translate ONLY what is given - nothing more, nothing less",
+        "Placeholder rules (MANDATORY):",
+        "- Preserve placeholders EXACTLY as written.",
+        "- Common formats: @@SCITRANS_KIND_0001_ABCD1234@@, <<KIND_0001>>, ⟦KIND_0001⟧.",
+        "- Do NOT modify, translate, remove, or create placeholders.",
+        "- If the input is ONLY a placeholder, output it unchanged.",
         "",
-        "6. INSTRUCTION SPILLOVER PREVENTION:",
-        "   - FORBIDDEN: Do NOT include ANY of these words in your output:",
-        "     * 'placeholder', 'conserver', 'mémorisez', 'rappelez-vous'",
-        "     * 'critique', 'critical', 'do not', 'ne pas', 'forbidden', 'interdit'",
-        "     * 'must', 'should', 'required', 'mandatory', 'obligatoire'",
-        "   - These are INSTRUCTION words - they should NEVER appear in translations",
-        "   - If you see these in your output, you are INCLUDING INSTRUCTIONS (hallucination)",
-        "",
-        "7. FORBIDDEN CONTENT:",
-        "   - Do NOT generate placeholder tokens like <<TABLE_0003>>, <<FORM_0001>>, etc.",
-        "   - Placeholders will be provided IN the source text if needed",
-        "   - NEVER create new placeholders - this is hallucination",
-        "   - Do NOT invent content not in the source text",
-        "",
-        "🚨 PLACEHOLDER PRESERVATION - HIGHEST PRIORITY 🚨",
-        "8. Preserve ALL placeholders EXACTLY as written - this is MANDATORY and NON-NEGOTIABLE.",
-        "   - Placeholders look like: <<PERSON_NAME_0001>>, <<MATH_INLINE_0002>>, <<TABLE_0003>>, <<FIGURE_CAPTION_0004>>",
-        "   - Placeholders may also use brackets: ⟦MATH_INLINE_0001⟧, ⟦PERSON_NAME_0002⟧",
-        "   - EVERY placeholder in the source text MUST appear in your translation EXACTLY as written.",
-        "   - If you see <<PERSON_NAME_0001>> in source, you MUST include <<PERSON_NAME_0001>> in your translation.",
-        "   - If you see ⟦MATH_INLINE_0002⟧ in source, you MUST include ⟦MATH_INLINE_0002⟧ in your translation.",
-        "   - DO NOT translate, modify, or remove placeholders - they are protected content markers.",
-        "   - DO NOT add spaces inside placeholders (e.g., << PERSON_NAME_0001 >> is WRONG).",
-        "   - DO NOT change placeholder format (e.g., <<PERSON_NAME_0001>> to ⟦PERSON_NAME_0001⟧ is WRONG).",
-        "",
-        "   CRITICAL: If the source text is ONLY a placeholder (e.g., '<<PERSON_NAME_0001>>'):",
-        "   - Return ONLY the placeholder unchanged: '<<PERSON_NAME_0001>>'",
-        "   - DO NOT translate it or add any text around it",
-        "   - DO NOT generate greetings, explanations, or any other text",
-        "   - The placeholder IS the content - preserve it exactly",
-        "",
-        "   Placeholder types and rules:",
-        "   - <<PERSON_NAME_XXXXX>> or ⟦PERSON_NAME_XXXXX⟧: Person names - preserve EXACTLY, do not translate",
-        "   - <<PLACE_NAME_XXXXX>> or ⟦PLACE_NAME_XXXXX⟧: Place names - preserve EXACTLY, do not translate",
-        "   - <<MATH_INLINE_XXXXX>> or ⟦MATH_INLINE_XXXXX⟧: Inline math - preserve EXACTLY, do not translate",
-        "   - <<MATH_DISPLAY_XXXXX>> or ⟦MATH_DISPLAY_XXXXX⟧: Display math - preserve EXACTLY, do not translate",
-        "   - <<TABLE_XXXXX>> or ⟦TABLE_XXXXX⟧: Table content - preserve structure EXACTLY",
-        "   - <<FIGURE_CAPTION_XXXXX>> or ⟦FIGURE_CAPTION_XXXXX⟧: Figure captions - translate caption text but preserve placeholder",
-        "   - <<TOC_ENTRY_XXXXX>> or ⟦TOC_ENTRY_XXXXX⟧: Table of contents - translate but preserve structure",
-        "   - <<URL_XXXXX>> or ⟦URL_XXXXX⟧: URLs - preserve EXACTLY, do not translate",
-        "   - <<EMAIL_XXXXX>> or ⟦EMAIL_XXXXX⟧: Email addresses - preserve EXACTLY, do not translate",
-        "",
-        "9. Do NOT translate LaTeX/math inside placeholders - keep them unchanged.",
-        "10. Preserve person names and place names EXACTLY as they appear in placeholders.",
-        "11. Preserve numbers, units, and citations exactly.",
-        "12. Preserve formatting:",
-        "   - If source has bullets (•, -, *), preserve them in translation",
-        "   - If source has NO bullets, do NOT add bullets to paragraphs",
-        "   - Preserve section headers (e.g., '1. Introduction' → '1. Introduction' in target language)",
-        "   - Preserve numbering EXACTLY:",
-        "     * Section numbers: '1. ', '2)', 'Section 3:' must keep the number",
-        "     * List numbers: '1.', '2.', '3.' must be preserved",
-        "     * Page numbers and references: keep all numbers unchanged",
-        "   - Numbering format: 'Section 2:' → 'Section 2 :' or 'Section 2:' (preserve colon/format)",
-        "13. Translate ALL text including headers, titles, table of contents, figures, captions, and section numbers.",
-        "    - Table of contents entries should be translated (e.g., '1. Introduction' → '1. Introduction' in target language).",
-        "    - Figure and table captions should be translated (e.g., 'Figure 1: Results' → 'Figure 1 : Résultats').",
-        "    - Section headers should be translated (e.g., 'Section 2: Methodology' → 'Section 2 : Méthodologie').",
-        "14. Word order: Ensure proper word order in target language.",
-        "    - Example: 'K-means Clustering Results' → 'Résultats de K-means Clustering' (not 'K-means Clustering Résultats')",
-        "    - Example: 'Machine Learning Algorithms' → 'Algorithmes d\\'Apprentissage Automatique' (proper word order)",
-        "    - Follow target language grammar rules for word order (e.g., French: noun + de + adjective).",
-        "15. Context awareness: Use context from previous blocks to maintain consistency.",
-        "    - If previous blocks mention 'K-means', use the same translation throughout.",
-        "    - Maintain consistent terminology across the document.",
-        "16. Avoid adding question marks (?) unless they exist in the source text.",
-        "17. Preserve all blocks: Do not omit any text blocks, especially those in tables, squares, or special layouts.",
+        "Never add extra tokens or labels. Translate only what is given.",
     ]
-    
-    # Enhanced instructions for headers/titles
+
     if is_header:
-        lines.extend([
+        lines += [
             "",
-            "========================================",
-            "🚨 CRITICAL INSTRUCTIONS FOR HEADERS/TITLES 🚨",
-            "========================================",
-            "- This is a HEADER or TITLE block - it MUST be translated.",
-            "",
-            "SECTION NUMBER PRESERVATION (HIGHEST PRIORITY):",
-            "- CRITICAL: Preserve section numbers/prefixes EXACTLY - DO NOT REMOVE THEM!",
-            "- Keep ALL numbers, colons, and punctuation:",
-            "  * 'Section 1: Introduction' → 'Section 1 : Introduction' (translate but KEEP 'Section 1:')",
-            "  * 'Section 2: Methodology' → 'Section 2 : Méthodologie' (translate but KEEP 'Section 2:')",
-            "  * 'Section 3: Results' → 'Section 3 : Résultats' (translate but KEEP 'Section 3:')",
-            "  * '1. Introduction' → '1. Introduction' (translate but KEEP '1.')",
-            "  * '2) Methods' → '2) Méthodes' (translate but KEEP '2)')",
-            "  * 'Chapter 5: Analysis' → 'Chapitre 5 : Analyse' (translate but KEEP 'Chapitre 5:')",
-            "",
-            "FORBIDDEN FOR HEADERS:",
-            "- ❌ DO NOT remove section numbers: 'Section 2: X' → 'X' is WRONG!",
-            "- ❌ DO NOT translate ONLY the title: 'Section 2: Methodology' → 'Méthodologie' is WRONG!",
-            "- ❌ DO NOT invent new content or expand the header",
-            "- ❌ DO NOT return unrelated text (like 'Document layout result')",
-            "- ❌ DO NOT add introductory text like 'Introduction à ce projet...'",
-            "- ❌ DO NOT add explanatory text like 'Le but de cette section...'",
-            "- ❌ DO NOT add reminders like 'N'oubliez pas...' or 'Rappelez-vous...'",
-            "",
-            "HEADER LENGTH CONSTRAINT:",
-            "- Headers/titles should be CONCISE - similar length to source (±20% max)",
-            "- If source is 23 chars, output should be 18-28 chars (NOT 179 chars!)",
-            "- Output ONLY the translated header text, nothing more",
-            "- DO NOT add paragraphs, explanations, or multi-sentence text",
-            "- ONE LINE ONLY for headers - keep it simple and direct",
-            "",
-            "CORRECT EXAMPLES:",
-            "- 'Small Test Document' → 'Petit Document de Test' (✓ 23→25 chars)",
-            "- 'Section 1: Introduction' → 'Section 1 : Introduction' (✓ 23→27 chars)",
-            "- 'Section 2: Methodology' → 'Section 2 : Méthodologie' (✓ 23→27 chars)",
-            "- 'Conclusion' → 'Conclusion' (✓ 10→10 chars)",
-            "",
-            "WRONG EXAMPLES:",
-            "- 'Section 1: Introduction' → 'Méthodologie' (✗ Missing 'Section 1:')",
-            "- 'Section 1: Introduction' → 'Introduction à ce projet...' (✗ Too long, extra text)",
-            "- 'Small Test Document' → 'Small Test Document' (✗ Not translated)",
-            "",
-            "REMEMBER:",
-            "- Translate the WORDS, but keep the NUMBERS and STRUCTURE",
-            "- Even if the word exists in both languages (e.g., 'Introduction'),",
-            "  you MUST provide the proper translation in the target language.",
-            "- DO NOT add extra content - translate ONLY what is given.",
-            "- Keep translation SHORT - headers/titles should be concise.",
-            "- Output length should match source length (±20% max for headers).",
-        ])
-    
-    # Enhanced instructions for bullet points
+            "Header/title rules:",
+            "- Keep section numbers and prefixes (e.g., '1.', 'Section 2:', 'Chapter 3:').",
+            "- Translate the words, keep numbers and punctuation.",
+            "- Keep it concise; one line only.",
+        ]
+
     if is_bullet:
-        lines.extend([
+        lines += [
             "",
-            "SPECIAL INSTRUCTIONS FOR BULLET POINTS:",
-            "- This is a BULLET POINT - it MUST be translated.",
-            "- Preserve the bullet character (•, -, *) but translate the text.",
-            "- Examples:",
-            f"  * '· Key point' → '· Point clé' (translate text, keep bullet)",
-            f"  * '- Important note' → '- Note importante' (translate text, keep bullet)",
-            "- DO NOT return the source text unchanged - always provide a translation.",
-        ])
-    
-    lines.extend([
-        "10. For short text blocks (headers, bullets, titles):",
-        "    - Translate EVERY word - do not skip or omit anything",
-        "    - Even single words like 'Conclusion' or 'Section 4' must be translated",
-        "    - Short phrases like '· Key point' must be fully translated",
-        "",
-        "FORBIDDEN: Do NOT return responses like:",
-        "- 'Je suis ravi de vous aider' (I'm happy to help)",
-        "- 'Pouvez-vous...' (Can you...)",
-        "- 'Comment puis-je...' (How can I...)",
-        "- Any greeting or explanation text",
-        "",
-        "IMPORTANT: If the text appears to already be in the target language, translate it anyway to ensure accuracy.",
-    ])
-    if glossary:
-        lines += ["", "GLOSSARY (must follow exactly):"]
-        for k, v in glossary.items():
+            "Bullet rules:",
+            "- Keep the bullet symbol (•, -, *, ·) and indentation.",
+            "- Translate the text after the bullet.",
+        ]
+
+    if is_table:
+        lines += [
+            "",
+            "Table rules:",
+            "- Preserve column separators (|, tabs, multi-spaces).",
+            "- Keep row structure and alignment; translate cell text only.",
+        ]
+
+    selected_terms = _select_glossary_terms(glossary, source_text)
+    if selected_terms:
+        lines += ["", "Glossary (use these exact translations):"]
+        for k, v in selected_terms:
             lines.append(f"- {k} -> {v}")
+
     return "\n".join(lines)
+
+
+def get_prompt_version() -> str:
+    return PROMPT_VERSION

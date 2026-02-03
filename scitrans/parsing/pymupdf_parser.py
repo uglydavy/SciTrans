@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import statistics
+from collections import Counter
 
 import fitz  # PyMuPDF
 
@@ -12,10 +14,7 @@ from scitrans.parsing.layout import (
     merge_paragraph_blocks,
     sort_blocks_multicolumn,
 )
-from scitrans.parsing.enhanced_font_extractor import (
-    extract_enhanced_font_from_span,
-    get_font_fallback,
-)
+from scitrans.parsing.enhanced_font_extractor import extract_enhanced_font_from_span
 
 
 def _bbox_from_tuple(t: tuple[float, float, float, float]) -> BBox:
@@ -35,6 +34,30 @@ def _deterministic_block_id(page_index: int, bbox: BBox, text_content: str) -> s
     combined = f"{bbox_str}_{text_hash}"
     block_hash = hashlib.sha256(combined.encode("utf-8")).hexdigest()[:12]
     return f"b_{page_index}_{block_hash}"
+
+
+def _text_from_span(span: dict) -> str:
+    chars = span.get("chars") or []
+    if chars:
+        return "".join(ch.get("c", "") for ch in chars)
+    return span.get("text", "") or ""
+
+
+def _detect_script_category(text: str) -> str:
+    if not text:
+        return "latin"
+    has_cjk = any(
+        0x4E00 <= ord(c) <= 0x9FFF
+        or 0x3040 <= ord(c) <= 0x30FF
+        or 0xAC00 <= ord(c) <= 0xD7AF
+        for c in text
+    )
+    if has_cjk:
+        return "cjk"
+    has_cyrillic = any(0x0400 <= ord(c) <= 0x04FF for c in text)
+    if has_cyrillic:
+        return "cyrillic"
+    return "latin"
 
 
 def _detect_and_tag_headers_titles(blocks: list[Block], page_index_map: dict[str, int] | None = None) -> None:
@@ -100,15 +123,15 @@ def _detect_and_tag_headers_titles(blocks: list[Block], page_index_map: dict[str
             is_first_page = (page_index_map[block.id] == 0)
         
         # IMPROVED: More lenient detection for headers/titles, especially for mixed-language documents
-        # Check if text contains CJK characters (Chinese/Japanese/Korean) - these are often headers
-        has_cjk = any(0x4E00 <= ord(c) <= 0x9FFF or 0x3040 <= ord(c) <= 0x30FF or 0xAC00 <= ord(c) <= 0xD7AF for c in block_text)
+        # Check script category
+        script_category = block.meta.get("script_category") or _detect_script_category(block_text)
+        has_cjk = script_category == "cjk"
         
         is_title_candidate = (
-            max_font_size >= 16 or  # Lowered from 18
-            (max_font_size >= 14 and is_bold and len(block_text) < 150) or  # More lenient
-            (max_font_size >= 12 and is_bold and len(block_text) < 50 and block_text[0].isupper()) or  # Short bold uppercase
-            (is_first_page and max_font_size >= 12 and len(block_text) < 100) or  # First page + large font
-            (has_cjk and max_font_size >= 10 and len(block_text) < 50)  # CJK text with reasonable font size
+            (max_font_size >= 16 and len(block_text) < 120)
+            or (max_font_size >= 14 and is_bold and len(block_text) < 120)
+            or (is_first_page and max_font_size >= 14 and len(block_text) < 100)
+            or (has_cjk and max_font_size >= 12 and len(block_text) < 40)
         )
         
         if is_title_candidate:
@@ -218,15 +241,19 @@ def parse_pdf(path: str, use_layout_intelligence: bool = True) -> Document:
             # text block
             lines: list[Line] = []
             text_parts: list[str] = []
+            raw_font_names: list[str] = []
+            normalized_fonts: list[str] = []
+            font_weights: list[str] = []
+            font_styles: list[str] = []
+            font_flags: list[int] = []
+            font_colors: list[int] = []
             for ln in b.get("lines", []):
                 line_bbox = _bbox_from_tuple(
                     tuple(ln.get("bbox", (bbox.x0, bbox.y0, bbox.x1, bbox.y1)))
                 )
                 spans: list[Span] = []
                 for sp in ln.get("spans", []):
-                    sp_text = sp.get("text", "")
-                    if not sp_text and sp.get("chars"):
-                        sp_text = "".join(ch.get("c", "") for ch in sp.get("chars", []))
+                    sp_text = _text_from_span(sp)
                     text_parts.append(sp_text)
                     sp_bbox = _bbox_from_tuple(
                         tuple(
@@ -236,20 +263,16 @@ def parse_pdf(path: str, use_layout_intelligence: bool = True) -> Document:
                     # Use enhanced font extraction for better accuracy
                     try:
                         enhanced_font = extract_enhanced_font_from_span(sp)
-                        # Get fallback font name in case original is not available
-                        fallback_font = get_font_fallback(
-                            enhanced_font.family,
-                            enhanced_font.weight,
-                            enhanced_font.style
-                        )
                         style = SpanStyle(
-                            font=fallback_font,  # Use fallback for rendering compatibility
+                            font=enhanced_font.normalized_name,
                             size=enhanced_font.size,
                             flags=enhanced_font.flags,
                             color=enhanced_font._color_to_int() if enhanced_font.color else None,
                         )
-                        # Store original font info in span metadata for reference
-                        # (Note: SpanStyle is frozen, so we store in block.meta later)
+                        raw_font_names.append(enhanced_font.raw_name)
+                        normalized_fonts.append(enhanced_font.normalized_name)
+                        font_weights.append(enhanced_font.weight)
+                        font_styles.append(enhanced_font.style)
                     except Exception as e:
                         logger.debug(f"Enhanced font extraction failed for span, using basic extraction: {e}")
                         # Fallback to basic extraction
@@ -259,6 +282,11 @@ def parse_pdf(path: str, use_layout_intelligence: bool = True) -> Document:
                             flags=int(sp.get("flags", 0)),
                             color=sp.get("color"),
                         )
+                    if style.flags:
+                        font_flags.append(int(style.flags))
+                    if style.color is not None:
+                        font_colors.append(int(style.color))
+
                     spans.append(Span(text=sp_text, bbox=sp_bbox, style=style))
                 lines.append(Line(spans=spans, bbox=line_bbox))
 
@@ -277,12 +305,34 @@ def parse_pdf(path: str, use_layout_intelligence: bool = True) -> Document:
                         if span.style.size:
                             font_sizes.append(float(span.style.size))
             
+            median_font_size = (
+                statistics.median(font_sizes) if font_sizes else 11.0
+            )
+            dominant_font = (
+                Counter(normalized_fonts).most_common(1)[0][0]
+                if normalized_fonts
+                else (list(font_families)[0] if font_families else "Times-Roman")
+            )
+            dominant_color = (
+                Counter(font_colors).most_common(1)[0][0] if font_colors else None
+            )
+            script_category = _detect_script_category(text_content)
+
             block_meta = {
                 "raw_type": 0,
                 "font_families": list(font_families) if font_families else ["Times-Roman"],
                 "avg_font_size": sum(font_sizes) / len(font_sizes) if font_sizes else 11.0,
                 "min_font_size": min(font_sizes) if font_sizes else 11.0,
                 "max_font_size": max(font_sizes) if font_sizes else 11.0,
+                "median_font_size": median_font_size,
+                "dominant_font": dominant_font,
+                "dominant_color": dominant_color,
+                "script_category": script_category,
+                "font_weights": list(set(font_weights)) if font_weights else [],
+                "font_styles": list(set(font_styles)) if font_styles else [],
+                "font_flags": font_flags,
+                "raw_font_names": list(set(raw_font_names)) if raw_font_names else [],
+                "normalized_fonts": list(set(normalized_fonts)) if normalized_fonts else [],
             }
             
             blocks.append(

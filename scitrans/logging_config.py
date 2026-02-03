@@ -6,14 +6,24 @@ import logging
 import sys
 from pathlib import Path
 
-# Default format for production
-PRODUCTION_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# Detailed format for debugging
-DEBUG_FORMAT = "%(asctime)s - %(name)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s"
+PRODUCTION_FORMAT = "%(asctime)s %(levelname)s %(name)s [%(block_id)s] %(message)s"
+DEBUG_FORMAT = "%(asctime)s %(levelname)s %(name)s [%(filename)s:%(lineno)d] [%(block_id)s] %(message)s"
 
 
-def setup_logging(level: str = "INFO", debug: bool = False, log_file: Path | None = None):
+class ContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "block_id"):
+            record.block_id = "-"
+        return True
+
+
+def setup_logging(
+    level: str = "INFO",
+    debug: bool = False,
+    log_file: Path | None = None,
+    *,
+    force: bool = False,
+):
     """Configure logging for SciTrans.
 
     Args:
@@ -24,18 +34,20 @@ def setup_logging(level: str = "INFO", debug: bool = False, log_file: Path | Non
     log_level = getattr(logging, level.upper(), logging.INFO)
     log_format = DEBUG_FORMAT if debug else PRODUCTION_FORMAT
 
-    # Configure root logger
-    logging.basicConfig(
-        level=log_level,
-        format=log_format,
-        handlers=[],  # Clear default handlers
-    )
+    root_logger = logging.getLogger()
+    if root_logger.handlers and not force:
+        root_logger.setLevel(log_level)
+        return
+    if force:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(logging.Formatter(log_format))
-    logging.getLogger().addHandler(console_handler)
+    console_handler.addFilter(ContextFilter())
+    root_logger.addHandler(console_handler)
 
     # File handler (optional)
     if log_file:
@@ -43,10 +55,11 @@ def setup_logging(level: str = "INFO", debug: bool = False, log_file: Path | Non
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(log_level)
         file_handler.setFormatter(logging.Formatter(log_format))
-        logging.getLogger().addHandler(file_handler)
+        file_handler.addFilter(ContextFilter())
+        root_logger.addHandler(file_handler)
 
     # Set library loggers to WARNING to reduce noise
-    for lib in ["urllib3", "httpx", "httpcore", "anthropic", "openai"]:
+    for lib in ["urllib3", "httpx", "httpcore", "anthropic", "openai", "fitz"]:
         logging.getLogger(lib).setLevel(logging.WARNING)
 
 

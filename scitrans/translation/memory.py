@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
 from rapidfuzz import fuzz
@@ -81,6 +82,7 @@ class TranslationMemory:
             "source_lang": source_lang,
             "target_lang": target_lang,
             "metadata": metadata or {},
+            "created_at": time.time(),
         }
         self.save()
 
@@ -142,6 +144,37 @@ class TranslationMemory:
         candidates.sort(key=lambda x: x[1], reverse=True)
 
         return candidates[:top_k]
+
+    def get_best_match(
+        self,
+        source: str,
+        source_lang: str,
+        target_lang: str,
+        *,
+        min_similarity: float = 0.92,
+        max_age_seconds: float | None = None,
+    ) -> tuple[str, float, dict] | None:
+        """Return best fuzzy match with metadata if above threshold and not expired."""
+        lang_key = f"{source_lang}-{target_lang}"
+        best: tuple[str, float, dict] | None = None
+
+        for key, entry in self.memory.items():
+            if not key.startswith(lang_key):
+                continue
+            created_at = entry.get("created_at")
+            if max_age_seconds is not None:
+                if not created_at or time.time() - float(created_at) > max_age_seconds:
+                    continue
+            similarity = fuzz.ratio(source, entry["source"]) / 100.0
+            if similarity < min_similarity:
+                continue
+            meta = entry.get("metadata", {}) or {}
+            if not best or similarity > best[1] or (
+                similarity == best[1] and meta.get("quality_score", 0) > best[2].get("quality_score", 0)
+            ):
+                best = (entry["target"], similarity, meta)
+
+        return best
 
     def _make_key(self, source: str, source_lang: str, target_lang: str) -> str:
         """Create a key for translation memory lookup."""

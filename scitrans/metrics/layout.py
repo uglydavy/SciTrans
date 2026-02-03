@@ -11,6 +11,7 @@ from scitrans.core.models import Document
 class LayoutMetrics:
     overlap_pairs: int
     mean_iou: float
+    max_iou: float
 
 
 def _iou(a: fitz.Rect, b: fitz.Rect) -> float:
@@ -25,7 +26,13 @@ def _iou(a: fitz.Rect, b: fitz.Rect) -> float:
     return 0.0 if union_area <= 0 else inter_area / union_area
 
 
-def compute_block_overlap_metrics(doc: Document, *, page_index: int = 0) -> LayoutMetrics:
+def compute_block_overlap_metrics(
+    doc: Document,
+    *,
+    page_index: int = 0,
+    min_iou: float = 0.0,
+    min_rect_area: float = 4.0,
+) -> LayoutMetrics:
     """Compute simple overlap metrics on a page based on parsed bboxes."""
     page = doc.pages[page_index]
     rects = [
@@ -33,21 +40,29 @@ def compute_block_overlap_metrics(doc: Document, *, page_index: int = 0) -> Layo
         for b in page.blocks
         if b.type == "text"
     ]
+    rects = [r for r in rects if r.width * r.height >= min_rect_area]
 
     overlaps = 0
     ious = []
     for i in range(len(rects)):
         for j in range(i + 1, len(rects)):
             iou = _iou(rects[i], rects[j])
-            if iou > 0:
+            if iou > min_iou:
                 overlaps += 1
                 ious.append(iou)
 
     mean_iou = sum(ious) / len(ious) if ious else 0.0
-    return LayoutMetrics(overlap_pairs=overlaps, mean_iou=mean_iou)
+    max_iou = max(ious) if ious else 0.0
+    return LayoutMetrics(overlap_pairs=overlaps, mean_iou=mean_iou, max_iou=max_iou)
 
 
-def compute_rendered_pdf_overlap_metrics(pdf_path: str, *, page_index: int = 0) -> LayoutMetrics:
+def compute_rendered_pdf_overlap_metrics(
+    pdf_path: str,
+    *,
+    page_index: int = 0,
+    min_iou: float = 0.01,
+    min_rect_area: float = 4.0,
+) -> LayoutMetrics:
     """Compute overlap metrics by parsing the rendered PDF directly.
     
     This validates that the actual rendered PDF has no overlapping text blocks.
@@ -64,7 +79,7 @@ def compute_rendered_pdf_overlap_metrics(pdf_path: str, *, page_index: int = 0) 
     
     if page_index >= len(pdf):
         pdf.close()
-        return LayoutMetrics(overlap_pairs=0, mean_iou=0.0)
+        return LayoutMetrics(overlap_pairs=0, mean_iou=0.0, max_iou=0.0)
     
     page = pdf[page_index]
     
@@ -78,7 +93,9 @@ def compute_rendered_pdf_overlap_metrics(pdf_path: str, *, page_index: int = 0) 
         if block.get("type") == 0:  # Text block
             bbox = block.get("bbox", [0, 0, 0, 0])
             if len(bbox) == 4:
-                rects.append(fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3]))
+                rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+                if rect.width * rect.height >= min_rect_area:
+                    rects.append(rect)
     
     # Compute overlaps
     overlaps = 0
@@ -86,12 +103,12 @@ def compute_rendered_pdf_overlap_metrics(pdf_path: str, *, page_index: int = 0) 
     for i in range(len(rects)):
         for j in range(i + 1, len(rects)):
             iou = _iou(rects[i], rects[j])
-            # Only count significant overlaps (IoU > 0.01 to ignore minor edge cases)
-            if iou > 0.01:
+            if iou > min_iou:
                 overlaps += 1
                 ious.append(iou)
     
     mean_iou = sum(ious) / len(ious) if ious else 0.0
+    max_iou = max(ious) if ious else 0.0
     pdf.close()
     
-    return LayoutMetrics(overlap_pairs=overlaps, mean_iou=mean_iou)
+    return LayoutMetrics(overlap_pairs=overlaps, mean_iou=mean_iou, max_iou=max_iou)

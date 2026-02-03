@@ -8,7 +8,6 @@ Provides utilities to check backend availability, dependencies, and health statu
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -39,6 +38,9 @@ BACKEND_DEPENDENCIES: dict[str, list[tuple[str, str, str]]] = {
             "pip install deep-translator>=1.11.0",
         ),
         # googletrans is optional fallback (has httpcore compatibility issues)
+    ],
+    "google_ai": [
+        ("requests", "HTTP requests for Google AI", "pip install requests>=2.31.0"),
     ],
     "huggingface": [
         ("huggingface_hub", "HuggingFace Hub client", "pip install huggingface-hub>=0.20.0"),
@@ -112,25 +114,23 @@ def check_backend_env_vars(backend: str) -> tuple[bool, list[str]]:
     Returns:
         Tuple of (all_set, list_of_missing_vars)
     """
-    backend_env_vars = {
-        "deepseek": ["DEEPSEEK_API_KEY"],
-        "anthropic": ["ANTHROPIC_API_KEY"],
-        "openai": ["OPENAI_API_KEY"],
-        "google": [],  # No API key needed for googletrans
-        "huggingface": [],  # Optional
-        "ollama": [],  # Local
-        "cascade_free": [],  # Uses other backends
-        "dummy": [],
+    from scitrans.translation.backends.config import get_backend_value
+
+    backend_keys = {
+        "deepseek": ("api_key", "DEEPSEEK_API_KEY"),
+        "anthropic": ("api_key", "ANTHROPIC_API_KEY"),
+        "openai": ("api_key", "OPENAI_API_KEY"),
+        "google_ai": ("api_key", None),
     }
 
-    required_vars = backend_env_vars.get(backend, [])
-    missing = []
+    if backend not in backend_keys:
+        return True, []
 
-    for var in required_vars:
-        if not os.getenv(var):
-            missing.append(var)
-
-    return len(missing) == 0, missing
+    key_name, env_var = backend_keys[backend]
+    value = get_backend_value(backend, key_name, env_var=env_var)
+    if not value:
+        return False, [f"{backend}.{key_name}"]
+    return True, []
 
 
 def get_backend_status(backend: str) -> dict[str, Any]:
@@ -197,23 +197,35 @@ def _try_create_backend(backend: str) -> Any | None:
             from scitrans.translation.backends.openai_backend import OpenAIBackend
 
             # Only try if API key is available
-            if not os.getenv("OPENAI_API_KEY"):
+            from scitrans.translation.backends.config import get_backend_value
+            if not get_backend_value("openai", "api_key", env_var="OPENAI_API_KEY"):
                 return None
             return OpenAIBackend()
         elif backend == "anthropic":
             from scitrans.translation.backends.anthropic_backend import AnthropicBackend
 
             # Only try if API key is available
-            if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("ANTHROPIC_AUTH_TOKEN"):
+            from scitrans.translation.backends.config import get_backend_value
+            if not get_backend_value("anthropic", "api_key", env_var="ANTHROPIC_API_KEY") and not get_backend_value(
+                "anthropic", "auth_token", env_var="ANTHROPIC_AUTH_TOKEN"
+            ):
                 return None
             return AnthropicBackend()
         elif backend == "deepseek":
             from scitrans.translation.backends.deepseek_backend import DeepSeekBackend
 
             # Only try if API key is available
-            if not os.getenv("DEEPSEEK_API_KEY"):
+            from scitrans.translation.backends.config import get_backend_value
+            if not get_backend_value("deepseek", "api_key", env_var="DEEPSEEK_API_KEY"):
                 return None
             return DeepSeekBackend()
+        elif backend == "google_ai":
+            from scitrans.translation.backends.google_backend import GoogleAIBackend
+
+            from scitrans.translation.backends.config import get_backend_value
+            if not get_backend_value("google_ai", "api_key"):
+                return None
+            return GoogleAIBackend()
         elif backend == "ollama":
             from scitrans.translation.backends.ollama_backend import OllamaBackend
 
@@ -262,6 +274,7 @@ def get_all_backends_status() -> dict[str, dict[str, Any]]:
         "anthropic",
         "openai",
         "google",
+        "google_ai",
         "huggingface",
         "ollama",
         "cascade_free",

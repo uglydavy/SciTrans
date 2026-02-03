@@ -37,6 +37,7 @@ class RerankScore:
     identity_penalty: float = 1.0  # 0.0-1.0 penalty for identity translations
     length_ratio: float = 1.0  # 0.0-1.0 penalty for unusual length ratios
     spillover_penalty: float = 1.0  # 0.0-1.0 penalty for instruction spillover
+    hallucinated_placeholders: float = 1.0  # 0.0-1.0 penalty for extra placeholders
     total: float = 0.0  # Weighted sum
 
     def is_valid(self) -> bool:
@@ -52,22 +53,28 @@ def score_placeholder_preservation(candidate: str, registry: dict[str, str]) -> 
     return present / len(registry) if registry else 1.0
 
 
-def score_glossary_compliance(candidate: str, glossary: dict[str, str] | None) -> float:
-    """Score: fraction of glossary terms correctly translated."""
-    if not glossary:
+def score_glossary_compliance(
+    source: str,
+    candidate: str,
+    glossary: dict[str, str] | None,
+) -> float:
+    """Score: fraction of relevant glossary terms correctly translated."""
+    if not glossary or not source.strip():
+        return 1.0
+
+    source_lower = source.lower()
+    relevant = [
+        (s, t) for s, t in glossary.items() if s and s.lower() in source_lower
+    ]
+    if not relevant:
         return 1.0
 
     correct = 0
-    total = 0
-    for source_term, target_term in glossary.items():
-        if not source_term.strip():
-            continue
-        total += 1
-        # Check if target term appears in candidate (case-insensitive)
+    for _source_term, target_term in relevant:
         if target_term.lower() in candidate.lower():
             correct += 1
 
-    return correct / total if total > 0 else 1.0
+    return correct / len(relevant)
 
 
 def extract_numbers(text: str) -> list[str]:
@@ -197,6 +204,31 @@ def score_spillover_penalty(candidate: str) -> float:
     return 1.0  # No penalty
 
 
+def _extract_placeholders(text: str) -> set[str]:
+    patterns = [
+        r"@@SCITRANS_[A-Z0-9_]+_\d{4}_[A-F0-9]{8}@@",
+        r"<<[^<>]+>>",
+        r"⟦[^⟦⟧]+⟧",
+    ]
+    matches: set[str] = set()
+    for pat in patterns:
+        matches.update(re.findall(pat, text))
+    return matches
+
+
+def score_hallucinated_placeholders(candidate: str, registry: dict[str, str]) -> float:
+    """Penalize placeholders that are not in the registry."""
+    placeholders = _extract_placeholders(candidate)
+    if not placeholders:
+        return 1.0
+    if not registry:
+        return 0.2
+    extra = [ph for ph in placeholders if ph not in registry]
+    if extra:
+        return 0.2
+    return 1.0
+
+
 def score_semantic_similarity(source: str, candidate: str, is_header: bool = False) -> float:
     """Score how well translation matches source structure and semantics.
     
@@ -312,6 +344,7 @@ def rerank_candidates(
         "identity_penalty": 8.0,  # NEW: Identity translation detection (critical)
         "length_ratio": 3.0,  # NEW: Hallucination detection via length
         "spillover_penalty": 6.0,  # NEW: Instruction spillover detection
+        "hallucinated_placeholders": 6.0,  # NEW: Extra placeholders not in registry
     }
     w = weights or default_weights
 
@@ -329,7 +362,7 @@ def rerank_candidates(
     for idx, candidate in enumerate(candidates):
         # Original scoring dimensions
         ph_score = score_placeholder_preservation(candidate, registry)
-        gloss_score = score_glossary_compliance(candidate, glossary)
+        gloss_score = score_glossary_compliance(source_text, candidate, glossary)
         num_score = score_numeric_stability(source_text, candidate)
         fmt_score = score_format_stability(source_text, candidate)
         sem_score = score_semantic_similarity(source_text, candidate, is_header=is_header)
@@ -338,6 +371,7 @@ def rerank_candidates(
         identity_score = score_identity_penalty(source_text, candidate)
         length_score = score_length_ratio(source_text, candidate)
         spillover_score = score_spillover_penalty(candidate)
+        hallucinated_score = score_hallucinated_placeholders(candidate, registry)
 
         # Calculate weighted total
         base_total = (
@@ -349,6 +383,7 @@ def rerank_candidates(
             + identity_score * w.get("identity_penalty", 8.0)  # NEW
             + length_score * w.get("length_ratio", 3.0)  # NEW
             + spillover_score * w.get("spillover_penalty", 6.0)  # NEW
+            + hallucinated_score * w.get("hallucinated_placeholders", 6.0)  # NEW
         )
 
         # Apply quality bonus based on candidate position (earlier = higher quality backend)
@@ -370,6 +405,7 @@ def rerank_candidates(
             identity_penalty=identity_score,  # NEW
             length_ratio=length_score,  # NEW
             spillover_penalty=spillover_score,  # NEW
+            hallucinated_placeholders=hallucinated_score,  # NEW
             total=total,
         )
         scored.append((candidate, score))

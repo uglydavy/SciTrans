@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import os
 import time
 
 from scitrans.translation.backends.base import TranslateRequest, TranslateResult
+from scitrans.translation.backends.config import get_backend_config, get_backend_value
 
 
 class OllamaBackend:
@@ -12,8 +12,9 @@ class OllamaBackend:
     Requires Ollama to be installed and running locally.
     Install: https://ollama.ai/
 
-    Env vars:
-      - OLLAMA_HOST (optional, default: http://localhost:11434)
+    Config file:
+      - ollama.host (optional, default: http://localhost:11434)
+      - ollama.api_key (optional)
     """
 
     name = "ollama"
@@ -22,9 +23,14 @@ class OllamaBackend:
         self,
         model: str = "llama3.2",
         host: str | None = None,
+        api_key: str | None = None,
     ):
+        cfg = get_backend_config("ollama")
+        if model == "llama3.2" and cfg.get("model"):
+            model = cfg.get("model")
         self.model = model
-        self.host = host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.host = host or cfg.get("host") or get_backend_value("ollama", "host", env_var="OLLAMA_HOST") or "http://localhost:11434"
+        self.api_key = api_key or cfg.get("api_key") or get_backend_value("ollama", "api_key", env_var="OLLAMA_API_KEY")
 
     def translate(self, req: TranslateRequest) -> TranslateResult:
         start = time.time()
@@ -65,8 +71,11 @@ class OllamaBackend:
                 "top_p": 0.9,        # Nucleus sampling for quality
             },
         }
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         try:
-            response = requests.post(url, json=payload, timeout=request_timeout)
+            response = requests.post(url, json=payload, timeout=request_timeout, headers=headers or None)
             response.raise_for_status()
             result = response.json()
             # Ollama returns {"response": "..."}

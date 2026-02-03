@@ -7,6 +7,8 @@ significantly speeding up translation for large documents.
 from __future__ import annotations
 
 import logging
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -38,37 +40,49 @@ class TranslationResult:
     error: Optional[str] = None
 
 
-def translate_block_worker(task: TranslationTask) -> TranslationResult:
+def translate_block_worker(task: TranslationTask, max_retries: int = 0) -> TranslationResult:
     """Worker function to translate a single block.
     
     This runs in a separate thread and handles one block translation.
     """
-    try:
-        res = task.backend.translate(task.request)
-        candidates = res.candidates if res.candidates else [""]
-        meta = {
-            "backend": task.backend.name,
-            "model": getattr(task.backend, "model", "unknown"),
-            "cached": False,
-            **res.meta,
-        }
-        return TranslationResult(
-            block_id=task.block_id,
-            candidates=candidates,
-            meta=meta,
-        )
-    except Exception as e:
-        logger.error(f"Block {task.block_id}: Translation failed in worker: {e}", exc_info=True)
-        return TranslationResult(
-            block_id=task.block_id,
-            candidates=[""],
-            meta={
+    attempt = 0
+    last_error: Exception | None = None
+    while attempt <= max_retries:
+        try:
+            res = task.backend.translate(task.request)
+            candidates = res.candidates if res.candidates else [""]
+            meta = {
                 "backend": task.backend.name,
-                "error": str(e),
-                "error_type": type(e).__name__,
-            },
-            error=str(e),
-        )
+                "model": getattr(task.backend, "model", "unknown"),
+                "cached": False,
+                **res.meta,
+            }
+            return TranslationResult(
+                block_id=task.block_id,
+                candidates=candidates,
+                meta=meta,
+            )
+        except Exception as e:
+            last_error = e
+            if attempt >= max_retries:
+                break
+            jitter = random.uniform(0.05, 0.3) * (2**attempt)
+            logger.warning(
+                f"Block {task.block_id}: Worker retry {attempt+1}/{max_retries} after error: {e}"
+            )
+            time.sleep(jitter)
+            attempt += 1
+    logger.error(f"Block {task.block_id}: Translation failed in worker: {last_error}", exc_info=True)
+    return TranslationResult(
+        block_id=task.block_id,
+        candidates=[""],
+        meta={
+            "backend": task.backend.name,
+            "error": str(last_error),
+            "error_type": type(last_error).__name__ if last_error else "Unknown",
+        },
+        error=str(last_error) if last_error else "Unknown",
+    )
 
 
 def translate_blocks_parallel(
@@ -77,6 +91,7 @@ def translate_blocks_parallel(
     build_request_fn: Callable[[MaskedBlock], TranslateRequest],
     max_workers: int = 4,
     progress_callback: Optional[Callable[[float, str], None]] = None,
+    max_retries: int = 0,
 ) -> dict[str, TranslationResult]:
     """Translate multiple blocks in parallel using threading.
     
@@ -115,7 +130,9 @@ def translate_blocks_parallel(
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
-        future_to_task = {executor.submit(translate_block_worker, task): task for task in tasks}
+        future_to_task = {
+            executor.submit(translate_block_worker, task, max_retries): task for task in tasks
+        }
         
         # Collect results as they complete
         for future in as_completed(future_to_task):
@@ -147,5 +164,6 @@ def translate_blocks_parallel(
                 completed += 1
     
     logger.info(f"Parallel translation complete: {len(results)}/{total} blocks translated")
-    return results
+    # Deterministic ordering by block_id
+    return dict(sorted(results.items(), key=lambda item: item[0]))
 

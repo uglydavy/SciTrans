@@ -21,6 +21,8 @@ ColorType = Union[int, Tuple[float, float, float]]  # fitz spans usually give in
 
 @dataclass(frozen=True)
 class EnhancedFont:
+    raw_name: str
+    normalized_name: str
     family: str
     weight: str = "normal"   # "normal" | "bold"
     style: str = "normal"    # "normal" | "italic"
@@ -74,7 +76,8 @@ def extract_enhanced_font_from_span(span: dict[str, Any]) -> EnhancedFont:
     """
     Extract EnhancedFont from a PyMuPDF span dict (from page.get_text('dict')).
     """
-    font = _normalize_font_name(str(span.get("font", "Times-Roman")))
+    raw_font = str(span.get("font", "Times-Roman"))
+    font = _normalize_font_name(raw_font)
     flags = int(span.get("flags", 0) or 0)
     size = float(span.get("size", 11.0) or 11.0)
     color = span.get("color", None)
@@ -86,6 +89,8 @@ def extract_enhanced_font_from_span(span: dict[str, Any]) -> EnhancedFont:
     style = "italic" if is_italic else "normal"
 
     return EnhancedFont(
+        raw_name=raw_font,
+        normalized_name=font,
         family=family,
         weight=weight,
         style=style,

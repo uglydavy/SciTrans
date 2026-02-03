@@ -78,6 +78,53 @@ def test_equation_span_detection():
     assert not is_equation_span(span4)
 
 
+def test_operator_pattern_detection():
+    """Detect math expressions with operators and variables."""
+    span = Span(
+        text="x = y + 2",
+        bbox=BBox(x0=0, y0=0, x1=60, y1=10),
+        style=SpanStyle(font="Times-Roman", size=11.0),
+    )
+    assert is_equation_span(span)
+
+
+def test_sub_super_script_detection():
+    """Detect math spans with superscripts/subscripts."""
+    span = Span(
+        text="H₂O + x²",
+        bbox=BBox(x0=0, y0=0, x1=50, y1=10),
+        style=SpanStyle(font="Times-Roman", size=11.0),
+    )
+    assert is_equation_span(span)
+
+
+def test_variable_pattern_detection():
+    """Detect spans with variable naming patterns."""
+    span = Span(
+        text="a b c",
+        bbox=BBox(x0=0, y0=0, x1=30, y1=10),
+        style=SpanStyle(font="Times-Roman", size=11.0),
+    )
+    assert is_equation_span(span)
+
+
+def test_math_context_detection():
+    """Detect math context such as ranges and fractions."""
+    span = Span(
+        text="0 ≤ x ≤ 1",
+        bbox=BBox(x0=0, y0=0, x1=60, y1=10),
+        style=SpanStyle(font="Times-Roman", size=11.0),
+    )
+    assert is_equation_span(span)
+
+    span2 = Span(
+        text="a/b",
+        bbox=BBox(x0=0, y0=0, x1=20, y1=10),
+        style=SpanStyle(font="Times-Roman", size=11.0),
+    )
+    assert is_equation_span(span2)
+
+
 def test_equation_block_detection():
     """Test block-level equation detection."""
     # Create block with all equation spans
@@ -138,3 +185,11 @@ def test_no_false_positives():
         style=SpanStyle(font="Times-Roman", size=11.0),
     )
     assert not is_equation_span(span2)
+
+    # Punctuation with words shouldn't be math
+    span3 = Span(
+        text="This is a sentence, with commas.",
+        bbox=BBox(x0=0, y0=0, x1=180, y1=10),
+        style=SpanStyle(font="Times-Roman", size=11.0),
+    )
+    assert not is_equation_span(span3)

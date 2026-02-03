@@ -7,7 +7,7 @@ Utility scripts for SciTrans development, testing, and benchmarking.
 ### Setup and Configuration
 
 #### `setup_api_keys.py`
-Interactive script to configure API keys.
+Interactive script to configure API keys in `.scitrans_backends.json` (not committed).
 
 **Usage:**
 ```bash
@@ -20,8 +20,8 @@ make setup-keys
 ```
 
 **What it does:**
-- Prompts for API keys (Anthropic, OpenAI, Ollama)
-- Creates/updates `.env` file
+- Prompts for API keys (Anthropic, OpenAI, DeepSeek, Google AI, HuggingFace, Ollama)
+- Creates/updates `.scitrans_backends.json`
 - Validates key format
 - Never logs or commits keys
 

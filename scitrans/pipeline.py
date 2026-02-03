@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import random
 import logging
 import re
 import threading
 import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,15 +27,17 @@ from scitrans.metrics.scoring import (
     compute_pre_translation_score,
 )
 from scitrans.parsing.pymupdf_parser import parse_pdf
-from scitrans.rendering.enhanced_block_renderer import render_translated_pdf_enhanced
+from scitrans.parsing.layout import is_table_candidate
 from scitrans.rendering.math_aware_renderer import (
     MathAwareRenderConfig,
     render_translated_pdf_math_aware,
 )
-from scitrans.rendering.math_safe_renderer import RenderConfig, render_translated_pdf
+from scitrans.rendering.math_safe_renderer import RenderConfig
 from scitrans.rendering.perfect_renderer import render_translated_pdf_perfect
 from scitrans.translation.backends.base import TranslateRequest, TranslationBackend
-from scitrans.translation.prompting import build_system_prompt
+from scitrans.translation.cache import TranslationCache, make_cache_key
+from scitrans.translation.memory import TranslationMemory
+from scitrans.translation.prompting import build_system_prompt, get_prompt_version
 from scitrans.translation.reranking import rerank_candidates
 from scitrans.utils.identity_translation_detector import (
     check_identity_translation,
@@ -59,7 +63,7 @@ class PipelineConfig:
     output_dir: str = "outputs"
     assets_dir: Optional[str] = None  # fonts etc
     render: RenderConfig = RenderConfig()
-    # Renderer mode: "perfect" (100% perfection), "enhanced" (preserves major styling), "auto" (detect math), "math-aware", "math-safe" (legacy)
+    # Renderer mode: "perfect" (primary), "auto"/"math-aware" (equation preservation)
     render_mode: str = "perfect"  # Default: perfect rendering with exact font sizes
     translate_tables: bool = False  # PHASE 4: default preserve tables
     # Phase 3 features
@@ -75,6 +79,12 @@ class PipelineConfig:
     # Performance features
     parallel_translation: bool = False  # Enable parallel block translation (experimental)
     max_workers: int = 4  # Max parallel workers for translation
+    cache_ttl_seconds: int = 7 * 24 * 60 * 60  # 7 days
+    use_memory: bool = True
+    memory_file: str = "outputs/translation_memory.json"
+    memory_min_similarity: float = 0.92
+    memory_ttl_seconds: int = 7 * 24 * 60 * 60  # 7 days
+    memory_use_fuzzy: bool = True
 
 
 def _block_text(block) -> str:
@@ -83,6 +93,27 @@ def _block_text(block) -> str:
     for ln in block.lines:
         lines.append("".join(sp.text for sp in ln.spans))
     return "\n".join(lines).strip("\n")
+
+
+def _compute_cache_version(
+    *,
+    backend: TranslationBackend,
+    cfg: PipelineConfig,
+    system_prompt: str,
+) -> str:
+    render_cfg = cfg.render.__dict__.copy()
+    version_data = {
+        "backend": backend.name,
+        "model": getattr(backend, "model", cfg.model),
+        "source_lang": cfg.source_lang,
+        "target_lang": cfg.target_lang,
+        "system_prompt": system_prompt,
+        "render": render_cfg,
+        "render_mode": cfg.render_mode,
+        "translate_tables": cfg.translate_tables,
+    }
+    payload = json.dumps(version_data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def extract_section_prefix(text: str) -> tuple[str, str]:
@@ -289,10 +320,15 @@ def _translate_single_block(
     doc: Document,
     masker: MaskingEngine,
     glossary: Optional[dict[str, str]],
+    glossary_manager: Optional[GlossaryManager],
     pre_scores_by_id: dict[str, Any],
-    cancel_event: threading.Event,
+    cancel_event: Optional[threading.Event],
+    cache: TranslationCache | None,
+    translation_memory: TranslationMemory | None,
 ) -> tuple[TranslatedBlock, str]:
     """Translate a single block. Returns (TranslatedBlock, translated_text)."""
+    if cancel_event is None:
+        cancel_event = threading.Event()
     if cancel_event.is_set():
         raise RuntimeError("Translation cancelled by user")
     
@@ -324,12 +360,18 @@ def _translate_single_block(
     # Get block metadata
     is_header_block = False
     is_bullet_block = False
+    is_table_block = False
+    block_meta: dict[str, Any] = {}
     for page in doc.pages:
         for block in page.blocks:
             if block.id == mb.block_id:
-                is_header_block = block.meta.get("is_header", False)
+                block_meta = block.meta or {}
+                is_header_block = block_meta.get("is_header", False)
                 source_text_check = _block_text(block)
-                is_bullet_block = any(source_text_check.strip().startswith(bullet) for bullet in ["•", "-", "*", "·"])
+                is_bullet_block = any(
+                    source_text_check.strip().startswith(bullet) for bullet in ["•", "-", "*", "·"]
+                )
+                is_table_block = block_meta.get("block_type") == "table" or block_meta.get("is_table", False)
                 break
     
     # CRITICAL: For headers, always generate multiple candidates and use reranking
@@ -342,14 +384,23 @@ def _translate_single_block(
     if is_bullet_block:
         console.print(f"   [blue]• Bullet point[/blue]")
     
-    # Build enhanced prompt
+    # Build enhanced prompt with relevant glossary terms
+    relevant_glossary = None
+    if glossary and source_text:
+        source_lower = source_text.lower()
+        relevant_glossary = {
+            k: v for k, v in glossary.items() if k and k.lower() in source_lower
+        }
     enhanced_prompt = build_system_prompt(
         source=cfg.source_lang,
         target=cfg.target_lang,
-        glossary=glossary,
+        glossary=relevant_glossary,
+        source_text=source_text,
         is_header=is_header_block,
         is_bullet=is_bullet_block,
+        is_table=is_table_block,
     )
+    prompt_version = get_prompt_version()
     
     # Create translation request with proper context
     req = TranslateRequest(
@@ -359,24 +410,114 @@ def _translate_single_block(
         system_prompt=enhanced_prompt,
         temperature=block_temperature,
         n_candidates=block_n_candidates,
-        context={"is_header": is_header_block, "block_id": mb.block_id},
+        context={
+            "is_header": is_header_block,
+            "block_id": mb.block_id,
+            "block_type": block_meta.get("block_type", "paragraph"),
+        },
     )
     
-    # Translate
+    # Translate (with cache + retries)
     console.print(f"   [cyan]🔄 Translating...[/cyan]")
     candidates: list[str] = []
     res_meta: dict = {}
     try:
         if cancel_event.is_set():
             raise RuntimeError("Translation cancelled by user")
-        res = backend.translate(req)
-        candidates = res.candidates if res.candidates else [""]
-        res_meta = {
-            "backend": backend.name,
-            "model": getattr(backend, "model", cfg.model),
-            "cached": False,
-            **res.meta,
-        }
+        cache_version = _compute_cache_version(
+            backend=backend,
+            cfg=cfg,
+            system_prompt=enhanced_prompt,
+        )
+        cache_key = None
+        cached = None
+        cache_status = "no_cache"
+        if cache:
+            cache_key = make_cache_key(
+                backend.name,
+                getattr(backend, "model", cfg.model),
+                mb.masked_text,
+                cfg.source_lang,
+                cfg.target_lang,
+                prompt_version=cache_version,
+            )
+            cached, cache_status = cache.get_with_status(
+                cache_key,
+                max_age_seconds=cfg.cache_ttl_seconds,
+                expected_version=cache_version,
+            )
+            logger.debug(f"Block {mb.block_id}: Cache status={cache_status}")
+        if cached and cached.get("candidates"):
+            candidates = cached["candidates"]
+            res_meta = {
+                "backend": backend.name,
+                "model": getattr(backend, "model", cfg.model),
+                "cached": True,
+                "cache_key": cache_key,
+                "cache_version": cache_version,
+                "cache_status": cache_status,
+                "prompt_version": prompt_version,
+                **(cached.get("meta") or {}),
+            }
+        else:
+            memory_used = False
+            if translation_memory and cfg.memory_use_fuzzy:
+                memory_match = translation_memory.get_best_match(
+                    mb.masked_text,
+                    cfg.source_lang,
+                    cfg.target_lang,
+                    min_similarity=cfg.memory_min_similarity,
+                    max_age_seconds=cfg.memory_ttl_seconds,
+                )
+                if memory_match:
+                    mem_text, mem_score, mem_meta = memory_match
+                    if not mb.registry or all(ph in mem_text for ph in mb.registry.keys()):
+                        candidates = [mem_text]
+                        res_meta = {
+                            "backend": backend.name,
+                            "model": getattr(backend, "model", cfg.model),
+                            "cached": False,
+                            "memory_hit": True,
+                            "memory_score": mem_score,
+                            "prompt_version": prompt_version,
+                            **(mem_meta or {}),
+                        }
+                        memory_used = True
+            if memory_used:
+                logger.info(f"Block {mb.block_id}: Using translation memory match")
+            else:
+                max_retries = max(0, cfg.max_translation_retries)
+                attempt = 0
+                last_error: Exception | None = None
+                while attempt <= max_retries:
+                    try:
+                        res = backend.translate(req)
+                        candidates = res.candidates if res.candidates else [""]
+                        res_meta = {
+                            "backend": backend.name,
+                            "model": getattr(backend, "model", cfg.model),
+                            "cached": False,
+                            "prompt_version": prompt_version,
+                            **res.meta,
+                        }
+                        break
+                    except Exception as e:
+                        last_error = e
+                        if attempt >= max_retries:
+                            raise
+                        jitter = random.uniform(0.05, 0.3) * (2**attempt)
+                        logger.warning(
+                            f"Block {mb.block_id}: Translation retry {attempt+1}/{max_retries} after error: {e}"
+                        )
+                        time.sleep(jitter)
+                        attempt += 1
+                if cache and cache_key and candidates:
+                    cache.set(
+                        cache_key,
+                        candidates,
+                        res_meta,
+                        version=cache_version,
+                    )
         # Log candidates
         if len(candidates) > 1:
             console.print(f"   [green]✓ Got {len(candidates)} candidates[/green]")
@@ -410,7 +551,7 @@ def _translate_single_block(
             candidates=candidates,
             source_text=source_text,
             registry=mb.registry,
-            glossary=glossary,
+            glossary=relevant_glossary,
             is_header=is_header_for_rerank,
         )
         if ranked:
@@ -430,7 +571,9 @@ def _translate_single_block(
     if candidate and mb.registry:
         # Find all placeholders in candidate
         import re
-        candidate_placeholders = set(re.findall(r'<<[A-Z_]+_\d+>>', candidate))
+        candidate_placeholders = set(re.findall(r'@@SCITRANS_[A-Z0-9_]+_\d{4}_[A-F0-9]{8}@@', candidate))
+        candidate_placeholders |= set(re.findall(r'<<[^<>]+>>', candidate))
+        candidate_placeholders |= set(re.findall(r'⟦[^⟦⟧]+⟧', candidate))
         # Find all placeholders in registry
         registry_placeholders = set(mb.registry.keys())
         # Check if candidate has placeholders NOT in registry
@@ -445,6 +588,54 @@ def _translate_single_block(
                 logger.warning(f"Block {mb.block_id}: Removed fake placeholder {fake}")
     
     restored, restore_errors = masker.restore(candidate, mb.registry, tolerant=True)
+    missing_placeholders = [e for e in restore_errors if e.startswith("missing_placeholder:")]
+    if missing_placeholders and candidate.strip() and mb.registry:
+        logger.warning(
+            f"Block {mb.block_id}: Missing placeholders after restore ({len(missing_placeholders)}). "
+            "Attempting one-shot placeholder repair."
+        )
+        repair_prompt = (
+            f"{enhanced_prompt}\n\n"
+            "STRICT PLACEHOLDER RULES:\n"
+            "- Preserve all @@SCITRANS_...@@ tokens EXACTLY as-is.\n"
+            "- Do NOT translate or alter the placeholder tokens.\n"
+            "- Do NOT delete placeholders.\n"
+            "- Output the full translation with the same placeholders included."
+        )
+        try:
+            repair_req = TranslateRequest(
+                text=mb.masked_text,
+                source_lang=cfg.source_lang,
+                target_lang=cfg.target_lang,
+                system_prompt=repair_prompt,
+                temperature=min(block_temperature, 0.2),
+                n_candidates=1,
+                context=context_text,
+            )
+            repair_res = backend.translate(repair_req)
+            if repair_res and repair_res.candidates and repair_res.candidates[0].strip():
+                repaired_candidate = repair_res.candidates[0]
+                restored, restore_errors = masker.restore(repaired_candidate, mb.registry, tolerant=True)
+                missing_placeholders = [e for e in restore_errors if e.startswith("missing_placeholder:")]
+                if missing_placeholders:
+                    logger.error(
+                        f"Block {mb.block_id}: Placeholder repair failed; falling back to source text."
+                    )
+                    restored = source_text
+                    restore_errors = ["placeholder_restore_failed"] + restore_errors
+        except Exception as repair_error:
+            logger.error(
+                f"Block {mb.block_id}: Placeholder repair failed with error: {repair_error}"
+            )
+            restored = source_text
+            restore_errors = ["placeholder_restore_failed"]
+    if glossary_manager and restored:
+        restored, glossary_stats = glossary_manager.enforce_translation(source_text, restored)
+        if glossary_stats.terms_violated:
+            logger.warning(
+                f"Block {mb.block_id}: Glossary violations={glossary_stats.terms_violated} "
+                f"adherence={glossary_stats.adherence_rate:.2f}"
+            )
     
     # PHASE 2.1 & 2.3: Handle section prefix extraction and validation
     section_prefix = mb.meta.get("section_prefix", "") if mb.meta else ""
@@ -566,6 +757,24 @@ def _translate_single_block(
         f"  Errors: {errors if errors else 'None'}\n"
         f"  Final status: {'OK' if ok else 'FAILED'}"
     )
+
+    if translation_memory and ok and restored and restored.strip():
+        quality_score = None
+        rerank_meta = res_meta.get("rerank_scores", {})
+        if isinstance(rerank_meta, dict):
+            quality_score = rerank_meta.get("best_score")
+        translation_memory.add(
+            source=mb.masked_text,
+            target=restored,
+            source_lang=cfg.source_lang,
+            target_lang=cfg.target_lang,
+            metadata={
+                "backend": backend.name,
+                "model": getattr(backend, "model", cfg.model),
+                "quality_score": quality_score or 0.0,
+                "prompt_version": res_meta.get("prompt_version"),
+            },
+        )
     
     return tb, restored
 
@@ -642,7 +851,12 @@ def run_pipeline(
             # PHASE 4: Translate tables, TOC, figures by default (user can disable with --preserve-tables)
             # Only skip tables if user explicitly requested to preserve them
             # But always translate table of contents, figures, and captions
-            is_table_region = block.meta.get("region") == "table"
+            is_table_region = (
+                block.meta.get("region") == "table"
+                or block.meta.get("block_type") == "table"
+                or block.meta.get("is_table", False)
+                or is_table_candidate(block)
+            )
             is_toc_or_figure = is_toc or is_figure_caption
             if is_table_region and not cfg.translate_tables and not is_toc_or_figure:
                 skipped_blocks.append((block.id, "table"))
@@ -747,6 +961,7 @@ def run_pipeline(
     console.print(f"[green]✓ Pre-scored {len(pre_scores)} blocks[/green]")
 
     # 2.7) Load domain glossaries if specified
+    glossary_manager: GlossaryManager | None = None
     if cfg.glossary_domains and GlossaryManager:
         try:
             glossary_mgr = GlossaryManager()
@@ -765,18 +980,33 @@ def run_pipeline(
 
             # Get combined glossary
             glossary = glossary_mgr.get_glossary_dict()
+            glossary_manager = glossary_mgr
             console.print(f"[green]✓ Total glossary terms: {len(glossary)}[/green]")
         except Exception as e:
             console.print(f"[yellow]⚠ Could not load domain glossaries: {e}[/yellow]")
+    elif glossary and GlossaryManager:
+        try:
+            glossary_mgr = GlossaryManager()
+            glossary_mgr.add_custom_terms(glossary)
+            glossary = glossary_mgr.get_glossary_dict()
+            glossary_manager = glossary_mgr
+        except Exception as e:
+            console.print(f"[yellow]⚠ Could not load custom glossary: {e}[/yellow]")
 
-    # 3) Translate - NO CACHING, always fresh translation
+    # 3) Translate - cache/memory with TTL (if enabled)
     system_prompt = build_system_prompt(
         source=cfg.source_lang, target=cfg.target_lang, glossary=glossary
     )
-    # ALWAYS disable cache to ensure fresh translations
-    cache = None
-    translation_memory = None
-    logger.info("Cache and translation memory disabled - translating all blocks fresh")
+    cache = TranslationCache(cache_dir=out_dir / ".cache") if cfg.use_cache else None
+    translation_memory = TranslationMemory(cfg.memory_file) if cfg.use_memory else None
+    if cache:
+        logger.info(f"Cache enabled with TTL={cfg.cache_ttl_seconds}s")
+    else:
+        logger.info("Cache disabled - translating all blocks fresh")
+    if translation_memory:
+        logger.info(
+            f"Translation memory enabled (file={cfg.memory_file}, ttl={cfg.memory_ttl_seconds}s)"
+        )
 
     translated_blocks: list[TranslatedBlock] = []
     translations: dict[str, str] = {}
@@ -903,7 +1133,6 @@ def run_pipeline(
         logger.info(f"Split {len(masked_blocks)} blocks into {len(batches)} progressive batches")
         
         # Track batch statistics
-        from scitrans.translation.backends.base import TranslateRequest
         successful_blocks = 0
         failed_blocks = 0
         identity_failures = 0
@@ -931,6 +1160,13 @@ def run_pipeline(
                                 is_header = block.meta.get("is_header", False)
                                 block_type = block.meta.get("block_type", "normal")
                                 break
+                    is_bullet = any(source_text.strip().startswith(bullet) for bullet in ["•", "-", "*", "·"])
+                    relevant_glossary = None
+                    if glossary and source_text:
+                        source_lower = source_text.lower()
+                        relevant_glossary = {
+                            k: v for k, v in glossary.items() if k and k.lower() in source_lower
+                        }
                     
                     # Mask source text
                     masked, registry, counts = masker.mask(source_text, None)
@@ -939,8 +1175,11 @@ def run_pipeline(
                     system_prompt = build_system_prompt(
                         source=cfg.source_lang,
                         target=cfg.target_lang,
-                        glossary=glossary,
+                        glossary=relevant_glossary,
+                        source_text=source_text,
                         is_header=is_header,
+                        is_bullet=is_bullet,
+                        is_table=block_type == "table",
                     )
                     
                     # Calculate per-request timeout based on text length
@@ -1128,7 +1367,6 @@ def run_pipeline(
         console.print(f"[cyan]⚡ Using batch translation mode ({len(masked_blocks)} blocks)[/cyan]")
         
         # Build all translation requests
-        from scitrans.translation.backends.base import TranslateRequest
         requests = []
         request_to_mb = {}  # Map request index to masked block
         
@@ -1145,6 +1383,13 @@ def run_pipeline(
                         is_header = block.meta.get("is_header", False)
                         block_type = block.meta.get("block_type", "normal")
                         break
+            is_bullet = any(source_text.strip().startswith(bullet) for bullet in ["•", "-", "*", "·"])
+            relevant_glossary = None
+            if glossary and source_text:
+                source_lower = source_text.lower()
+                relevant_glossary = {
+                    k: v for k, v in glossary.items() if k and k.lower() in source_lower
+                }
             
             # Mask source text
             masked, registry, counts = masker.mask(source_text, None)
@@ -1153,8 +1398,11 @@ def run_pipeline(
             system_prompt = build_system_prompt(
                 source=cfg.source_lang,
                 target=cfg.target_lang,
-                glossary=glossary,
+                glossary=relevant_glossary,
+                source_text=source_text,
                 is_header=is_header,
+                is_bullet=is_bullet,
+                is_table=block_type == "table",
             )
             
             # Calculate per-request timeout based on text length
@@ -1343,28 +1591,61 @@ def run_pipeline(
             completed = 0
             
             def translate_block_parallel(mb: MaskedBlock, idx: int) -> tuple[str, TranslatedBlock, str]:
-                """Translate a block in parallel - simplified version without retry."""
+                """Translate a block in parallel with retries for stability."""
                 if cancel_event.is_set():
                     raise RuntimeError("Translation cancelled")
-                try:
-                    tb, restored = _translate_single_block(
-                        mb, idx, len(masked_blocks), backend, cfg, doc, masker, glossary, pre_scores_by_id, cancel_event
-                    )
-                    return mb.block_id, tb, restored
-                except RuntimeError:
-                    raise  # Re-raise cancellation
-                except Exception as e:
-                    logger.error(f"Block {mb.block_id}: Parallel translation failed: {e}", exc_info=True)
-                    # Return failed block
-                    tb = TranslatedBlock(
-                        block_id=mb.block_id,
-                        source_text=mb.masked_text,
-                        translated_text="",
-                        ok=False,
-                        errors=[f"parallel_error: {e}"],
-                        meta={},
-                    )
-                    return mb.block_id, tb, ""
+                max_retries = max(0, cfg.max_translation_retries)
+                attempt = 0
+                while attempt <= max_retries:
+                    try:
+                        tb, restored = _translate_single_block(
+                            mb,
+                            idx,
+                            len(masked_blocks),
+                            backend,
+                            cfg,
+                            doc,
+                            masker,
+                            glossary,
+                            glossary_manager,
+                            pre_scores_by_id,
+                            cancel_event,
+                            cache,
+                            translation_memory,
+                        )
+                        if tb.ok or attempt >= max_retries:
+                            return mb.block_id, tb, restored
+                    except RuntimeError:
+                        raise  # Re-raise cancellation
+                    except Exception as e:
+                        if attempt >= max_retries:
+                            logger.error(
+                                f"Block {mb.block_id}: Parallel translation failed after retries: {e}",
+                                exc_info=True,
+                            )
+                            tb = TranslatedBlock(
+                                block_id=mb.block_id,
+                                source_text=mb.masked_text,
+                                translated_text="",
+                                ok=False,
+                                errors=[f"parallel_error: {e}"],
+                                meta={},
+                            )
+                            return mb.block_id, tb, ""
+                        jitter = random.uniform(0.05, 0.3) * (2**attempt)
+                        logger.warning(
+                            f"Block {mb.block_id}: Parallel retry {attempt+1}/{max_retries} after error: {e}"
+                        )
+                        time.sleep(jitter)
+                    attempt += 1
+                return mb.block_id, TranslatedBlock(
+                    block_id=mb.block_id,
+                    source_text=mb.masked_text,
+                    translated_text="",
+                    ok=False,
+                    errors=["parallel_error: unknown"],
+                    meta={},
+                ), ""
             
             # Execute in parallel
             with ThreadPoolExecutor(max_workers=cfg.max_workers) as executor:
@@ -1407,9 +1688,22 @@ def run_pipeline(
                         translations_dict[mb.block_id] = ""
                         completed += 1
             
-            # Convert dicts to lists
-            translated_blocks = list(translated_blocks_dict.values())
-            translations = translations_dict
+            # Convert dicts to lists in deterministic order
+            translated_blocks = []
+            translations = {}
+            for mb in masked_blocks:
+                tb = translated_blocks_dict.get(mb.block_id)
+                if not tb:
+                    tb = TranslatedBlock(
+                        block_id=mb.block_id,
+                        source_text=mb.masked_text,
+                        translated_text="",
+                        ok=False,
+                        errors=["parallel_missing_result"],
+                        meta={},
+                    )
+                translated_blocks.append(tb)
+                translations[mb.block_id] = translations_dict.get(mb.block_id, "")
             logger.info(f"Parallel translation complete: {completed}/{len(masked_blocks)} blocks")
         else:
             # Sequential translation (original logic with retry)
@@ -1439,7 +1733,19 @@ def run_pipeline(
                 # CRITICAL FIX: Call _translate_single_block and append the result
                 try:
                     tb, restored = _translate_single_block(
-                        mb, idx, len(masked_blocks), backend, cfg, doc, masker, glossary, pre_scores_by_id, cancel_event
+                        mb,
+                        idx,
+                        len(masked_blocks),
+                        backend,
+                        cfg,
+                        doc,
+                        masker,
+                        glossary,
+                        glossary_manager,
+                        pre_scores_by_id,
+                        cancel_event,
+                        cache,
+                        translation_memory,
                     )
                     translated_blocks.append(tb)
                     logger.debug(f"Block {mb.block_id}: Appended to translated_blocks (ok={tb.ok})")
@@ -1491,7 +1797,6 @@ def run_pipeline(
                 block_n_candidates = max(cfg.n_candidates, 2 if cfg.enable_reranking else 1)
             block_temperature = cfg.temperature
 
-            # NO CACHE, NO MEMORY - Always translate fresh
             cache_key = None
             cached_result = None
             memory_match = None
@@ -1501,10 +1806,17 @@ def run_pipeline(
 
             # Build enhanced prompt for headers/bullets
             # Build enhanced prompt for headers/bullets
+            relevant_glossary = None
+            if glossary and source_text_check:
+                source_lower = source_text_check.lower()
+                relevant_glossary = {
+                    k: v for k, v in glossary.items() if k and k.lower() in source_lower
+                }
             enhanced_prompt = build_system_prompt(
                 source=cfg.source_lang,
                 target=cfg.target_lang,
-                glossary=glossary,
+                glossary=relevant_glossary,
+                source_text=source_text_check,
                 is_header=is_header_block,
                 is_bullet=is_bullet_block,
             )
@@ -1581,8 +1893,47 @@ def run_pipeline(
             logger.debug(f"Block {mb.block_id}: Full masked text: {mb.masked_text}")
 
             try:
-                res = backend.translate(req)
-                candidates = res.candidates if res.candidates else [""]
+                res = None
+                cache_version = _compute_cache_version(
+                    backend=backend,
+                    cfg=cfg,
+                    system_prompt=enhanced_prompt,
+                )
+                if cache:
+                    cache_key = make_cache_key(
+                        backend.name,
+                        getattr(backend, "model", cfg.model),
+                        mb.masked_text,
+                        cfg.source_lang,
+                        cfg.target_lang,
+                        prompt_version=cache_version,
+                    )
+                    cached_result = cache.get(
+                        cache_key,
+                        max_age_seconds=cfg.cache_ttl_seconds,
+                        expected_version=cache_version,
+                    )
+                if cached_result and cached_result.get("candidates"):
+                    candidates = cached_result["candidates"]
+                    res_meta = {
+                        "backend": backend.name,
+                        "model": getattr(backend, "model", cfg.model),
+                        "cached": True,
+                        "cache_key": cache_key,
+                        "cache_version": cache_version,
+                        **(cached_result.get("meta") or {}),
+                    }
+                else:
+                    res = backend.translate(req)
+                    candidates = res.candidates if res.candidates else [""]
+                    res_meta = {
+                        "backend": backend.name,
+                        "model": getattr(backend, "model", cfg.model),
+                        "cached": False,
+                        **res.meta,
+                    }
+                    if cache and cache_key:
+                        cache.set(cache_key, candidates, res_meta, version=cache_version)
                 
                 # CRITICAL: Clean instruction spillover from backend responses
                 from scitrans.utils.translation_cleaner import clean_instruction_spillover
@@ -1599,13 +1950,13 @@ def run_pipeline(
                         cleaned_candidates.append(cand)
                 
                 candidates = cleaned_candidates
-                
-                res_meta = {
-                    "backend": backend.name,
-                    "model": getattr(backend, "model", cfg.model),
-                    "cached": False,
-                    **res.meta,
-                }
+
+                if not res_meta:
+                    res_meta = {
+                        "backend": backend.name,
+                        "model": getattr(backend, "model", cfg.model),
+                        "cached": False,
+                    }
 
                 # DEBUG: Log what we got back from backend
                 if candidates and candidates[0]:
@@ -1618,7 +1969,7 @@ def run_pipeline(
                     console.print(f"[red]  ✗ Backend returned EMPTY![/red]")
 
                 # Log which backends were used (for cascade_free)
-                if backend.name == "cascade_free" and res.meta.get("backends_used"):
+                if backend.name == "cascade_free" and res and res.meta.get("backends_used"):
                     backend_names = [
                         b["backend"] for b in res.meta["backends_used"] if b.get("success")
                     ]
@@ -2300,16 +2651,16 @@ def run_pipeline(
             translate_tables=cfg.translate_tables,
         )
         elif cfg.render_mode == "enhanced":
-            # Enhanced renderer (preserves titles, headers, bold, bullets)
-            render_translated_pdf_enhanced(
-            source_pdf=input_pdf,
-            doc=doc,
-            translations=translations,
-            output_pdf=output_pdf,
-            cfg=cfg.render,
-            assets_dir=cfg.assets_dir,
-            translate_tables=cfg.translate_tables,
-        )
+            # Consolidated to primary renderer for best style fidelity
+            render_translated_pdf_perfect(
+                source_pdf=input_pdf,
+                doc=doc,
+                translations=translations,
+                output_pdf=output_pdf,
+                cfg=cfg.render,
+                assets_dir=cfg.assets_dir,
+                translate_tables=cfg.translate_tables,
+            )
         elif cfg.render_mode in ("auto", "math-aware"):
             # Use math-aware renderer (preserve equation spans)
             render_translated_pdf_math_aware(
@@ -2321,15 +2672,16 @@ def run_pipeline(
             assets_dir=cfg.assets_dir,
         )
         elif cfg.render_mode == "math-safe":
-            # Legacy math-safe renderer (redacts all text)
-            render_translated_pdf(
-            source_pdf=input_pdf,
-            doc=doc,
-            translations=translations,
-            output_pdf=output_pdf,
-            cfg=cfg.render,
-            assets_dir=cfg.assets_dir,
-        )
+            # Consolidated to primary renderer for best style fidelity
+            render_translated_pdf_perfect(
+                source_pdf=input_pdf,
+                doc=doc,
+                translations=translations,
+                output_pdf=output_pdf,
+                cfg=cfg.render,
+                assets_dir=cfg.assets_dir,
+                translate_tables=cfg.translate_tables,
+            )
         else:
             raise ValueError(
                 f"Invalid render_mode: {cfg.render_mode}. Must be 'perfect', 'enhanced', 'auto', 'math-aware', or 'math-safe'."
@@ -2476,8 +2828,26 @@ def repair_failed_blocks(
     console.print(f"[yellow]Repairing {len(block_ids)} blocks[/yellow]")
 
     masker = MaskingEngine()
+    source_text_for_prompt = ""
+    if block_ids:
+        for page in doc.pages:
+            for block in page.blocks:
+                if block.id == block_ids[0]:
+                    source_text_for_prompt = _block_text(block)
+                    break
+            if source_text_for_prompt:
+                break
+    relevant_glossary = None
+    if glossary and source_text_for_prompt:
+        source_lower = source_text_for_prompt.lower()
+        relevant_glossary = {
+            k: v for k, v in glossary.items() if k and k.lower() in source_lower
+        }
     system_prompt = build_system_prompt(
-        source=cfg.source_lang, target=cfg.target_lang, glossary=glossary
+        source=cfg.source_lang,
+        target=cfg.target_lang,
+        glossary=relevant_glossary,
+        source_text=source_text_for_prompt,
     )
 
     # Stronger prompt for repair

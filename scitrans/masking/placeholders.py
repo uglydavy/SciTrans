@@ -8,11 +8,12 @@ identifier, an incrementing index and an eight‑digit CRC32 checksum of the
 protected text. The checksum allows us to detect if a placeholder has been
 modified or omitted by the model.
 
-Example token::
+Example tokens::
 
     @@SCITRANS_MATH_INLINE_0001_3F0A1C2B@@
+    @@SCITRANS_CODEBLOCK_0002_A1B2C3D4@@
 
-The functions in this module centralise creation and basic validation of these
+The functions in this module centralize creation and basic validation of these
 tokens. Validation here is intentionally minimal – full validation and
 recovery of placeholders happens in the masking engine and downstream scoring.
 """
@@ -30,7 +31,7 @@ def generate_placeholder(kind: str, num: int, text: str) -> str:
     """Create a deterministic placeholder token for the given span.
 
     Args:
-        kind: The logical category of the span (e.g. ``MATH_INLINE``).
+        kind: The logical category of the span (e.g. ``MATH_INLINE``, ``CODEBLOCK``).
         num:  A 1-based index used to ensure uniqueness per kind.
         text: The exact text being replaced. The CRC of this text is
             incorporated into the token for integrity checking.

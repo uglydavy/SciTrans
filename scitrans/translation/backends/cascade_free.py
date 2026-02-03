@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import re
 import time
 
 from scitrans.translation.backends.base import TranslateRequest, TranslateResult
+from scitrans.utils.identity_translation_detector import check_identity_translation
 
 
 class CascadeFreeBackend:
@@ -95,72 +95,6 @@ class CascadeFreeBackend:
         elif has_ollama:
             logger.warning("cascade_free: Only Ollama available - consider adding Google Translate for better coverage")
 
-    def _is_identity_translation(self, source: str, translation: str, threshold: float = 0.90, is_header: bool = False) -> bool:
-        """Check if translation is identical or too similar to source (identity translation).
-        
-        For headers with section numbers, compares only the content AFTER the prefix
-        to allow proper preservation of section numbering.
-        
-        Args:
-            source: Source text
-            translation: Translated text
-            threshold: Similarity threshold (0-1). Higher = stricter (less permissive)
-                      Default 0.90, academic content uses 0.95, headers use 0.98
-            is_header: Whether this is a header/title block
-            
-        Returns True if the translation is essentially unchanged from source.
-        """
-        if not source or not translation:
-            return False
-        
-        # WHITELIST CHECK: If text contains technical terms, allow identity
-        # Technical terms like "GPT-3", "DALL-E", "RLHF" are valid when identical
-        from scitrans.utils.content_detector import contains_whitelisted_terms
-        if contains_whitelisted_terms(source) or contains_whitelisted_terms(translation):
-            # Contains technical terms - very permissive (99% threshold)
-            threshold = 0.99
-        
-        # Normalize whitespace and case for comparison
-        source_norm = " ".join(source.lower().split())
-        trans_norm = " ".join(translation.lower().split())
-        
-        # For headers with section numbers, compare only the content after the prefix
-        if is_header:
-            section_pattern = r'^(section|chapter|part|chapitre|partie)\s+\d+\s*:?\s*'
-            source_content = re.sub(section_pattern, '', source_norm, flags=re.IGNORECASE)
-            trans_content = re.sub(section_pattern, '', trans_norm, flags=re.IGNORECASE)
-            
-            # If both have section prefixes, compare only content
-            if source_content != source_norm or trans_content != trans_norm:
-                # At least one has a section prefix - compare content only
-                try:
-                    from difflib import SequenceMatcher
-                    similarity = SequenceMatcher(None, source_content, trans_content).ratio()
-                    # Use configurable threshold (default 0.95 for headers, can be 0.98 for academic)
-                    header_threshold = max(threshold, 0.95) if threshold < 0.95 else threshold
-                    if similarity > header_threshold:
-                        return True
-                    return False
-                except Exception:
-                    # If comparison fails, fall through to standard check
-                    pass
-        
-        # Standard comparison for non-headers or headers without section numbers
-        # If exactly the same (case-insensitive), it's identity
-        if source_norm == trans_norm:
-            return True
-        
-        # Use configurable threshold (passed from request)
-        try:
-            from difflib import SequenceMatcher
-            similarity = SequenceMatcher(None, source_norm, trans_norm).ratio()
-            if similarity > threshold:
-                return True
-        except Exception:
-            pass
-        
-        return False
-    
     def translate(self, req: TranslateRequest) -> TranslateResult:
         start = time.time()
         candidates: list[str] = []
@@ -173,6 +107,13 @@ class CascadeFreeBackend:
         # Sort backends by quality priority (Ollama first, Google last)
         backend_priority = {"ollama": 0, "google": 1}
         sorted_backends = sorted(self._backends, key=lambda x: backend_priority.get(x[0], 99))
+        stripped_text = (req.text or "").strip()
+        if stripped_text and len(stripped_text) <= 8:
+            # Avoid long Ollama timeouts for tiny tokens/short strings
+            before = len(sorted_backends)
+            sorted_backends = [b for b in sorted_backends if b[0] != "ollama"]
+            if len(sorted_backends) != before:
+                logger.info("cascade_free: Skipping Ollama for short text to avoid timeouts")
         logger.info(f"cascade_free: Using {len(sorted_backends)} backends: {[name for name, _ in sorted_backends]}")
 
         # Collect translations from all available backends (prioritize quality)
@@ -191,15 +132,18 @@ class CascadeFreeBackend:
             # Speed comes from increased threshold (90/95%), not from skipping retries
             max_retries = 3
             retry_count = 0
+            logged_identity = False
             
             try:
                 # Detect if this is a header block (requires stricter validation)
                 # Handle context as dict (new) or legacy string (backward compatibility)
                 if isinstance(req.context, dict):
                     is_header = req.context.get("is_header", False)
+                    is_title = req.context.get("is_title", False)
                 else:
                     # Legacy string context or empty - can't determine header status
                     is_header = False
+                    is_title = False
                 
                 while retry_count < max_retries:
                     # Build retry-specific prompt
@@ -229,11 +173,11 @@ class CascadeFreeBackend:
                     # Call backend
                     result = backend.translate(current_req)
                     
-                    if result and result.candidates and result.candidates[0]:
-                        candidate = result.candidates[0]
+                    if result and result.candidates:
+                        raw_candidates = [c for c in result.candidates if c and c.strip()]
                         
                         # Filter empty/None candidates
-                        if not candidate or not candidate.strip():
+                        if not raw_candidates:
                             retry_count += 1
                             if retry_count < max_retries:
                                 logger.warning(
@@ -254,31 +198,44 @@ class CascadeFreeBackend:
                                 )
                                 result_queue.put((None, backend_name, priority, False, "Empty translation"))
                                 return
-                        
-                        # Check for identity translation (context-aware for headers)
-                        # Use threshold from request (default 0.90, academic 0.95, header 0.98)
-                        threshold = req.identity_threshold if hasattr(req, 'identity_threshold') else 0.90
-                        if self._is_identity_translation(req.text, candidate, threshold=threshold, is_header=is_header):
+
+                        valid_candidates: list[str] = []
+                        identity_candidates: list[str] = []
+                        for candidate in raw_candidates:
+                            identity_result = check_identity_translation(
+                                req.text,
+                                candidate,
+                                is_header=is_header,
+                                is_title=is_title,
+                            )
+                            if identity_result.is_identity and identity_result.should_retry:
+                                identity_candidates.append(candidate)
+                            else:
+                                valid_candidates.append(candidate)
+
+                        if not valid_candidates and identity_candidates:
                             retry_count += 1
                             if retry_count < max_retries:
-                                logger.warning(f"cascade_free: {backend_name} returned identity translation (attempt {retry_count}/{max_retries}), retrying...")
+                                if not logged_identity:
+                                    logger.warning(
+                                        f"cascade_free: {backend_name} returned identity translation "
+                                        f"(attempt {retry_count}/{max_retries}), retrying..."
+                                    )
+                                    logged_identity = True
                                 time.sleep(0.1)  # Brief pause before retry
                                 continue
-                            else:
-                                logger.error(f"cascade_free: {backend_name} still returning identity translation after {max_retries} retries - MARKING AS FAILED")
-                                # For headers, this is a hard failure - don't accept identity
-                                if is_header:
-                                    result_queue.put((None, backend_name, priority, False, "Identity translation (header)"))
-                                    return
-                                # For non-headers, we'll still mark as failed but return the candidate for potential fallback
-                                result_queue.put((candidate, backend_name, priority, False, f"Identity translation after {max_retries} retries"))
-                                return
-                        
-                        # Valid translation found
+                            logger.error(
+                                f"cascade_free: {backend_name} still returning identity translation after "
+                                f"{max_retries} retries - MARKING AS FAILED"
+                            )
+                            result_queue.put((None, backend_name, priority, False, "Identity translation (header/title)"))
+                            return
+
+                        # Valid translation(s) found
                         if retry_count > 0:
                             logger.info(f"cascade_free: {backend_name} retry #{retry_count} successful - got valid translation")
-                        logger.info(f"cascade_free: {backend_name} returned {len(candidate)} chars in {time.time() - backend_start:.2f}s")
-                        result_queue.put((candidate, backend_name, priority, True, None))
+                        logger.info(f"cascade_free: {backend_name} returned {len(valid_candidates)} candidate(s) in {time.time() - backend_start:.2f}s")
+                        result_queue.put((valid_candidates, backend_name, priority, True, None))
                         return
                     
                     # No candidates - retry
@@ -343,7 +300,8 @@ class CascadeFreeBackend:
                 completed_backends.add(backend_name)
                 
                 if success and candidate:
-                    candidates_with_source.append((candidate, backend_name, priority))
+                    for cand in candidate:
+                        candidates_with_source.append((cand, backend_name, priority))
                     backend_info.append({
                         "backend": backend_name,
                         "success": True,
@@ -398,6 +356,7 @@ class CascadeFreeBackend:
         # Sort candidates by quality priority (lower number = higher quality)
         candidates_with_source.sort(key=lambda x: x[2])
         candidates = [c[0] for c in candidates_with_source]
+        candidate_meta = [{"text": c, "backend": b} for c, b, _ in candidates_with_source]
         if not candidates:
             # All backends failed - log this with detailed information
             failed_backends = [b for b in backend_info if not b.get("success")]
@@ -414,7 +373,8 @@ class CascadeFreeBackend:
                 f"  Action: Returning empty result (will trigger emergency retry)"
             )
             # Fallback: return empty
-            candidates = [""]
+            candidates = [req.text or ""]
+            candidate_meta = [{"text": candidates[0], "backend": "fallback"}]
 
         latency = time.time() - start
 
@@ -429,8 +389,40 @@ class CascadeFreeBackend:
                 "Consider setting up Ollama (local) for better quality: https://ollama.ai/"
             )
 
+        # Backend-aware reranking (free-tier only)
+        from scitrans.translation.reranking import rerank_candidates, RerankScore
+
+        backend_bonus = {"ollama": 0.8, "google": -0.4}
+        ranked = rerank_candidates(
+            candidates=candidates,
+            source_text=req.text,
+            registry={},
+            glossary=None,
+            is_header=isinstance(req.context, dict) and bool(req.context.get("is_header", False)),
+        )
+        if ranked:
+            adjusted: list[tuple[str, RerankScore]] = []
+            for cand, score in ranked:
+                backend_name = next((m["backend"] for m in candidate_meta if m["text"] == cand), "unknown")
+                bonus = backend_bonus.get(backend_name, 0.0)
+                adjusted_score = RerankScore(
+                    placeholder_preservation=score.placeholder_preservation,
+                    glossary_compliance=score.glossary_compliance,
+                    numeric_stability=score.numeric_stability,
+                    format_stability=score.format_stability,
+                    semantic_similarity=score.semantic_similarity,
+                    identity_penalty=score.identity_penalty,
+                    length_ratio=score.length_ratio,
+                    spillover_penalty=score.spillover_penalty,
+                    hallucinated_placeholders=score.hallucinated_placeholders,
+                    total=score.total + bonus,
+                )
+                adjusted.append((cand, adjusted_score))
+            adjusted.sort(key=lambda x: (not x[1].is_valid(), -x[1].total))
+            candidates = [c for c, _ in adjusted]
+
         return TranslateResult(
-            candidates=candidates,  # Reranking happens at pipeline level
+            candidates=candidates,  # Reranked list (best first)
             model=self.model,
             backend=self.name,
             meta={
@@ -439,6 +431,7 @@ class CascadeFreeBackend:
                 "num_candidates": len(candidates),
                 "note": "Free cascade backend - multiple models combined",
                 "warning": "Low quality expected" if successful_backends == ["google"] else None,
+                "candidates_with_backend": candidate_meta,
             },
         )
     
